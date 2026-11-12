@@ -9,12 +9,65 @@ keywords: [概念, 术语, 是什么, 区别, 关系, 名词解释, 频道和群
 
 NekroNXT 里的东西不多，弄清这几样之间的关系，其他页面就好读了。
 
-```text
-平台账号 ──发现──▶ 频道 ◀──接线── 智能体 ◀── 扩展
- (QQ、微信…)      (群、私聊)       (人设、模型、能力)
+```nxt:diagram
+id: concepts-map
+title: 几样东西怎么连在一起
+type: flow
+nodes:
+  - id: account
+    label: 平台账号
+    note: QQ 机器人、微信……
+    at: [0, 0]
+  - id: channel
+    label: 频道
+    note: 群、私聊、内置频道
+    at: [1, 0]
+  - id: agent
+    label: 智能体
+    note: 人设、模型、能力
+    at: [2, 0]
+  - id: extension
+    label: 扩展
+    note: 工具、页面、技能
+    at: [2, 1]
+edges:
+  - from: account
+    to: channel
+    label: 带进来
+  - from: agent
+    to: channel
+    label: 接线
+  - from: extension
+    to: agent
+    label: 加本事
 ```
 
 一句话：平台账号把群和私聊带进来，成为频道；你把频道接到某个智能体上，她就在那里说话；扩展给她加本事。
+
+一条群消息到她的回复，大致走这几步：
+
+```nxt:diagram
+id: concepts-message-path
+title: 一条群消息怎么变成回复
+type: flow
+animate: true
+nodes:
+  - id: member
+    label: 群友发言
+    note: 比如 @ 了她
+  - id: account
+    label: 平台账号
+    note: 收到这条消息
+  - id: channel
+    label: 频道
+    note: 记进聊天记录
+  - id: agent
+    label: 智能体
+    note: 按触发方式决定开口
+  - id: reply
+    label: 回到群里
+    note: 经同一个账号发出
+```
 
 ## 智能体
 

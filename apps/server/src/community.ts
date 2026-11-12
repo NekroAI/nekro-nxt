@@ -54,6 +54,9 @@ const REQUEST_TIMEOUT_MS = 30_000
 const PACKAGE_TIMEOUT_MS = 120_000
 const MAX_PACKAGE_BYTES = 16 * 1024 * 1024
 const MAX_JSON_BYTES = 4 * 1024 * 1024
+/** Documentation images are screenshots and short GIFs; anything larger is not one. */
+const MAX_DOC_MEDIA_BYTES = 8 * 1024 * 1024
+const DOC_MEDIA_TIMEOUT_MS = 20_000
 
 interface CommunitySettingsRepository {
   getSystemSetting(key: string): SystemSettingRecord | undefined
@@ -699,6 +702,29 @@ export class CommunityService {
     if (input.anchor !== undefined) search.set('anchor', input.anchor)
     const path = input.id.split('/').map(encodeURIComponent).join('/')
     return this.#api(`/api/v1/docs/pages/${path}?${search.toString()}`)
+  }
+
+  /**
+   * One image of the documentation by its ref (a screenshot, an effect image or one state of a widget), downloaded so
+   * the agent can send it. The community names the file; it lives in the public download bucket.
+   */
+  async docMedia(input: {
+    readonly ref: string
+    readonly channel: 'stable' | 'preview'
+  }): Promise<{ readonly ref: string; readonly label: string; readonly bytes: Uint8Array }> {
+    const search = new URLSearchParams({ ref: input.ref, channel: input.channel })
+    const media = z
+      .object({ ref: z.string(), label: z.string(), url: z.string().url() })
+      .parse(await this.#api(`/api/v1/docs/media?${search.toString()}`))
+    const url = new URL(media.url)
+    if (url.protocol !== 'https:') throw new CommunityError(502, '社区给出的文档图片地址不安全。')
+    const response = await this.#request(url, {}, DOC_MEDIA_TIMEOUT_MS)
+    if (!response.ok) throw new CommunityError(502, '文档图片下载失败。', 'community-request-failed')
+    if (Number(response.headers.get('content-length') ?? 0) > MAX_DOC_MEDIA_BYTES)
+      throw new CommunityError(502, '文档图片过大。')
+    const bytes = new Uint8Array(await response.arrayBuffer())
+    if (bytes.byteLength > MAX_DOC_MEDIA_BYTES) throw new CommunityError(502, '文档图片过大。')
+    return { ref: media.ref, label: media.label, bytes }
   }
 
   async getExtension(extensionId: string): Promise<CommunityExtensionDetail> {

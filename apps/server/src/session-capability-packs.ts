@@ -37,6 +37,7 @@ export const WORKSPACE_FILE_TOOLS = [
 const COMMUNITY_DOCS_INSTRUCTIONS = [
   '先用自己的话把做法或原因讲清楚，按对方的情况挑重点，不要整段照抄文档；再附上最相关的一个链接，方便对方自己看完整步骤和截图。',
   '文档版本和这台 NekroNXT 一致。文档里没有的按钮、设置不要编；查不到就直说，并给出最接近的页面。',
+  '对方找不到界面上的位置、或者一段流程说不清时，把文档里对应的图发过去，比描述位置快；一次一两张，不要整页地发。',
 ].join('\n')
 
 const SCHEDULED_TASKS_INSTRUCTIONS =

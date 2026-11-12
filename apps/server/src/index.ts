@@ -270,7 +270,7 @@ import {
 import { extensionReferenceTool } from './extension-reference-tool.js'
 import { sessionCapabilityPacks } from './session-capability-packs.js'
 import { communityBrowseTools } from './community-agent-tools.js'
-import { communityDocsTools, type CommunityDocsPort } from './community-docs-tools.js'
+import { communityDocsMediaTool, communityDocsTools, type CommunityDocsPort } from './community-docs-tools.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -1489,13 +1489,22 @@ export const createChannelAsset = async (input: {
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly grantedAt?: number
+}): Promise<{ readonly assetId: AssetRecord['id']; readonly byteSize: number; readonly mediaType: string }> =>
+  createChannelAssetFromBytes({ ...input, bytes: decodeModelAssetContent(input.encoding, input.content) })
+
+/** Bytes the host fetched for the agent (a documentation image) become an asset it may send in this channel. */
+export const createChannelAssetFromBytes = async (input: {
+  readonly channelId: ChannelId
+  readonly bytes: Uint8Array
+  readonly assets: AssetAccessRepository
+  readonly assetService: AssetService
+  readonly grantedAt?: number
 }): Promise<{ readonly assetId: AssetRecord['id']; readonly byteSize: number; readonly mediaType: string }> => {
   const grantAt = input.grantedAt ?? Date.now()
   if (!Number.isSafeInteger(grantAt) || grantAt < 0) {
     throw new TypeError('asset_create grant clock must return a non-negative integer.')
   }
-  const bytes = decodeModelAssetContent(input.encoding, input.content)
-  const prepared = await input.assetService.prepare({ bytes })
+  const prepared = await input.assetService.prepare({ bytes: input.bytes })
   const grant = input.assets.grantAssetAccess({
     assetId: prepared.asset.id,
     channelId: input.channelId,
@@ -4993,8 +5002,19 @@ export class DshHostRuntime implements AgentSessionDriver {
         for (const tool of communityBrowseTools(() => governancePort()?.community())) agentContext.tools.register(tool)
       }
       const communityDocs = this.#communityDocs
-      if (communityDocs !== undefined && revision.capabilities.communityDocs)
+      if (communityDocs !== undefined && revision.capabilities.communityDocs) {
         for (const tool of communityDocsTools(communityDocs)) agentContext.tools.register(tool)
+        agentContext.tools.register(
+          communityDocsMediaTool(communityDocs, (bytes) =>
+            createChannelAssetFromBytes({
+              channelId: input.channelId,
+              bytes,
+              assets: this.#assets,
+              assetService: this.#assetService,
+            }),
+          ),
+        )
+      }
       mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore, () =>
         this.listAvailableLlmModels(),
       )

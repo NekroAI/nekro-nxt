@@ -4,12 +4,21 @@
 //   node scripts/docs-bundle.mjs build <stable|preview> [--out .local/docs-bundle] [--shots .local/docs-shots] [--strict]
 //   node scripts/docs-bundle.mjs upload <stable|preview> [--out .local/docs-bundle]   needs R2_ACCOUNT_ID and keys
 // Bundle format: docs/site/BUNDLE.md.
+import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  describeWidget,
+  extractWidgets,
+  resolveWidget,
+  widgetAnimates,
+  widgetPosters,
+} from '../docs/site/widgets/spec.mjs'
+import { buildWidgetRuntime, WIDGETS_DIR } from './lib/docs-widget-runtime.mjs'
 import { r2Aws, retrying } from './mirror-desktop-release.mjs'
 import { readProductRelease } from './product-release.mjs'
 
@@ -24,7 +33,7 @@ const REPOSITORY_URL = 'https://github.com/NekroAI/nekro-nxt'
 const FRONT_MATTER_KEYS = new Set(['summary', 'ui', 'routes', 'keywords', 'since', 'flow'])
 const LIST_KEYS = new Set(['ui', 'routes', 'keywords'])
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
-const SITE_DIRECTORIES = new Set(['images', 'media', 'flows'])
+const SITE_DIRECTORIES = new Set(['images', 'media', 'flows', 'widgets'])
 const MEDIA_EXTENSIONS = ['.webp', '.png', '.jpg']
 const IMAGE_TYPES = {
   '.png': 'image/png',
@@ -34,6 +43,8 @@ const IMAGE_TYPES = {
   '.gif': 'image/gif',
   '.svg': 'image/svg+xml',
 }
+/** Everything uploaded under assets/: images, plus the widget runtime. */
+const ASSET_TYPES = { ...IMAGE_TYPES, '.js': 'text/javascript; charset=utf-8' }
 
 /** Front matter is a strict subset of YAML: `key: value` and `key: [a, b]` lines only. */
 export function parseFrontMatter(text, file) {
@@ -108,6 +119,10 @@ const quotedTerms = (lines) => {
   return [...terms]
 }
 
+/** A tour's step text describes the interface too, so its 「」 words are checked like the page's. */
+const widgetTerms = (widgets) =>
+  quotedTerms(widgets.flatMap((widget) => (widget.kind === 'tour' ? widget.data.steps.map((step) => step.text) : [])))
+
 async function readSections() {
   const raw = JSON.parse(await readFile(path.join(repositoryRoot, siteRoot, 'sections.json'), 'utf8'))
   return raw.sections.map((section) => {
@@ -146,7 +161,7 @@ export async function readSite({ commit = 'main' } = {}) {
       const lines = body.replace(/^\n+/u, '').split('\n')
       const title = lines[0].match(/^# (.+)$/u)?.[1]
       if (title === undefined) throw new Error(`${file}：页面头部之后第一行必须是 # 标题`)
-      const markdownLines = lines.slice(1)
+      const { lines: markdownLines, widgets } = extractWidgets(lines.slice(1), file, errors)
       while (markdownLines[0] === '') markdownLines.shift()
       const counts = new Map([[headingAnchor(plainHeading(title), new Map()), 1]])
       const anchors = new Set()
@@ -164,6 +179,14 @@ export async function readSite({ commit = 'main' } = {}) {
       }
       const flowShots = fields.flow === undefined ? undefined : await readFlowShots(fields.flow)
       if (flowShots === null) errors.push(`${file}：flow 指向的 ${siteRoot}/flows/${fields.flow}.flow.ts 不存在`)
+      // A tour shows a shot of the page's own flow, like an image does; its shot is published with the page's.
+      const shots = new Set()
+      for (const widget of widgets.filter((entry) => entry.kind === 'tour')) {
+        if (fields.flow === undefined) errors.push(`${file}：截图导览 ${widget.id} 要用截图，但页面头部没有 flow`)
+        else if (flowShots && !flowShots.has(widget.data.shot))
+          errors.push(`${file}：截图导览 ${widget.id} 用的截图 ${widget.data.shot} 不在流程 ${fields.flow} 里`)
+        shots.add(widget.data.shot)
+      }
       pages.set(id, {
         id,
         file,
@@ -174,13 +197,23 @@ export async function readSite({ commit = 'main' } = {}) {
         headings,
         anchors,
         flowShots: flowShots ?? new Set(),
-        shots: new Set(),
-        terms: quotedTerms(markdownLines),
+        shots,
+        widgets,
+        terms: [...new Set([...quotedTerms(markdownLines), ...widgetTerms(widgets)])],
       })
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error))
     }
   }
+
+  // Widgets are addressed by id across the whole bundle (agents ask for their images by it).
+  const widgetOwners = new Map()
+  for (const page of pages.values())
+    for (const widget of page.widgets) {
+      if (widgetOwners.has(widget.id))
+        errors.push(`${page.file}：组件 id ${widget.id} 已经用在 ${widgetOwners.get(widget.id)}`)
+      widgetOwners.set(widget.id, page.file)
+    }
 
   // Shots from every flow land in one directory, so their names must not collide.
   const flowsDir = path.join(repositoryRoot, siteRoot, 'flows')
@@ -365,22 +398,29 @@ export function renderReadme(sections, pages) {
   return `${lines.join('\n')}\n`
 }
 
-/** The previous bundle's shots, kept for pages whose flow failed this time. */
-async function previousShots(channel) {
+/** The previous bundle's shots and widgets, kept for pages whose flow or widget images failed this time. */
+async function previousBundle(channel) {
   try {
     const manifest = /** @type {{ bundle: string }} */ (
       await (await globalThis.fetch(`${DIST_ORIGIN}/${channel}/manifest.json`)).json()
     )
-    const bundle = /** @type {{ shots?: Record<string, unknown> }} */ (
+    const bundle = /** @type {{ shots?: Record<string, unknown>, widgets?: Record<string, unknown> }} */ (
       await (await globalThis.fetch(`${DIST_ORIGIN}/${channel}/${manifest.bundle}`)).json()
     )
-    return bundle.shots ?? {}
+    return { shots: bundle.shots ?? {}, widgets: bundle.widgets ?? {} }
   } catch (error) {
     console.warn(
       `读取上一版文档包失败，流程失败的截图不会保留：${error instanceof Error ? error.message : String(error)}`,
     )
-    return {}
+    return { shots: {}, widgets: {} }
   }
+}
+
+/** Adds a file to the content-addressed assets and returns its address. */
+const publishFile = (site, file) => {
+  const asset = `${createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16)}${path.extname(file)}`
+  site.assets.set(asset, file)
+  return `${ASSET_ORIGIN}/${asset}`
 }
 
 /**
@@ -412,17 +452,86 @@ export function applyFlows(site, reportsDir, previous) {
       const light = path.join(reportsDir, `${name}.light.webp`)
       const dark = path.join(reportsDir, `${name}.dark.webp`)
       if (fresh !== undefined && existsSync(light) && existsSync(dark)) {
-        const url = (file) => {
-          const asset = `${createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16)}.webp`
-          site.assets.set(asset, file)
-          return `${ASSET_ORIGIN}/${asset}`
+        shots[name] = {
+          light: publishFile(site, light),
+          dark: publishFile(site, dark),
+          width: fresh.width,
+          height: fresh.height,
+          ...(fresh.marks === undefined ? {} : { marks: fresh.marks }),
         }
-        shots[name] = { light: url(light), dark: url(dark), width: fresh.width, height: fresh.height }
       } else if (previous[name] !== undefined) shots[name] = previous[name]
       else missing.push(`${page.file}：截图 ${name} 没有生成，上一版也没有`)
     }
   }
   return { shots, stale, missing }
+}
+
+/**
+ * Each widget with its text version, resolved data and images. A tour whose shot or marks are gone marks its page stale
+ * and keeps the previous bundle's version; images that were not rendered fall back to the previous ones and are
+ * reported, since every reader outside the site sees those images.
+ */
+export function applyWidgets(site, flows, widgetsDir, previous) {
+  const reportFile = path.join(widgetsDir, 'widgets.json')
+  const report = existsSync(reportFile) ? JSON.parse(readFileSync(reportFile, 'utf8')) : null
+  const widgets = {}
+  for (const page of site.pages.values())
+    for (const widget of page.widgets) {
+      const before = previous[widget.id]
+      let resolved
+      try {
+        resolved = resolveWidget(widget, (name) => flows.shots[name])
+      } catch (error) {
+        flows.stale.set(page.id, [
+          ...(flows.stale.get(page.id) ?? []),
+          error instanceof Error ? error.message : String(error),
+        ])
+        if (before !== undefined) widgets[widget.id] = before
+        else flows.missing.push(`${page.file}：组件 ${widget.id} 无法生成，上一版也没有`)
+        continue
+      }
+      const rendered = report?.widgets?.[widget.id]
+      const file = (name) => path.join(widgetsDir, name)
+      const posters = {}
+      let complete = rendered?.status === 'passed'
+      for (const { state, label } of widgetPosters(widget)) {
+        const size = rendered?.posters?.[state]
+        const light = file(`${widget.id}.${state}.light.webp`)
+        const dark = file(`${widget.id}.${state}.dark.webp`)
+        if (complete && size !== undefined && existsSync(light) && existsSync(dark))
+          posters[state] = { light: publishFile(site, light), dark: publishFile(site, dark), ...size, label }
+        else complete = false
+      }
+      let animation
+      if (widgetAnimates(widget)) {
+        const gif = file(`${widget.id}.animation.gif`)
+        if (complete && rendered.animation !== undefined && existsSync(gif))
+          animation = { url: publishFile(site, gif), ...rendered.animation }
+        else complete = false
+      }
+      if (!complete) {
+        flows.missing.push(
+          `${page.file}：组件 ${widget.id} 的图没有生成${rendered?.error ? `（${rendered.error}）` : ''}${before ? '，沿用上一版' : ''}`,
+        )
+        if (before === undefined) continue
+      }
+      widgets[widget.id] = {
+        kind: widget.kind,
+        title: widget.title,
+        page: page.id,
+        text: describeWidget(widget),
+        data: resolved.data,
+        posters: complete ? posters : before.posters,
+        ...(complete
+          ? animation === undefined
+            ? {}
+            : { animation }
+          : before.animation
+            ? { animation: before.animation }
+            : {}),
+      }
+    }
+  return widgets
 }
 
 /** The help button's table: the deepest matching route wins, so longer routes come first. */
@@ -441,7 +550,12 @@ export function renderRoutes(pages) {
   ].join('\n')
 }
 
-export function bundleOf({ sections, pages }, release, builtAt, { shots = {}, stale = new Map() } = {}) {
+export function bundleOf(
+  { sections, pages },
+  release,
+  builtAt,
+  { shots = {}, stale = new Map(), widgets = {}, widgetRuntime = /** @type {string | null} */ (null) } = {},
+) {
   return {
     schemaVersion: 1,
     channel: release.channel,
@@ -456,6 +570,8 @@ export function bundleOf({ sections, pages }, release, builtAt, { shots = {}, st
       }))
       .filter((section) => section.pages.length > 0),
     shots,
+    widgets,
+    widgetRuntime,
     pages: [...pages.values()].map((page) => ({
       id: page.id,
       section: page.section,
@@ -482,20 +598,30 @@ async function build(channel, out, { shotsDir, strict }) {
   const release = await readProductRelease(repositoryRoot, channel)
   const site = await readSite({ commit: release.commit })
   if (site.errors.length > 0) throw new Error(site.errors.join('\n'))
-  const flows = applyFlows(site, shotsDir, await previousShots(channel))
+  const previous = await previousBundle(channel)
+  const flows = applyFlows(site, shotsDir, previous.shots)
+  const widgets = applyWidgets(site, flows, path.join(shotsDir, WIDGETS_DIR), previous.widgets)
+  let widgetRuntime = null
+  if (Object.keys(widgets).length > 0) {
+    const code = await buildWidgetRuntime()
+    const asset = `${createHash('sha256').update(code).digest('hex').slice(0, 16)}.js`
+    site.assets.set(asset, Buffer.from(code))
+    widgetRuntime = `${ASSET_ORIGIN}/${asset}`
+  }
   const problems = [...[...flows.stale].map(([id, reasons]) => `${id} 待更新：${reasons.join('；')}`), ...flows.missing]
   if (problems.length > 0) {
     const message = ['文档流程有问题：', ...problems.map((problem) => `  - ${problem}`)].join('\n')
     if (strict) throw new Error(message)
     console.warn(message)
   }
-  const bundle = JSON.stringify(bundleOf(site, release, new Date().toISOString(), flows))
+  const bundle = JSON.stringify(bundleOf(site, release, new Date().toISOString(), { ...flows, widgets, widgetRuntime }))
   const digest = createHash('sha256').update(bundle).digest('hex')
   await rm(out, { recursive: true, force: true })
   await mkdir(path.join(out, 'bundles'), { recursive: true })
   await mkdir(path.join(out, 'assets'), { recursive: true })
   await writeFile(path.join(out, 'bundles', `${digest}.json`), bundle)
-  for (const [name, source] of site.assets) await writeFile(path.join(out, 'assets', name), await readFile(source))
+  for (const [name, source] of site.assets)
+    await writeFile(path.join(out, 'assets', name), typeof source === 'string' ? await readFile(source) : source)
   const manifest = {
     schemaVersion: 1,
     channel,
@@ -506,7 +632,7 @@ async function build(channel, out, { shotsDir, strict }) {
   }
   await writeFile(path.join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   console.log(
-    `文档包 ${release.version}：${site.pages.size} 页、${site.assets.size} 张图片、${flows.stale.size} 页待更新 → ${path.relative(repositoryRoot, out)}`,
+    `文档包 ${release.version}：${site.pages.size} 页、${Object.keys(widgets).length} 个组件、${site.assets.size} 个文件、${flows.stale.size} 页待更新 → ${path.relative(repositoryRoot, out)}`,
   )
 }
 
@@ -542,7 +668,7 @@ async function upload(channel, out) {
   const immutable = 'public, max-age=31536000, immutable'
   for (const name of await readdir(path.join(out, 'assets'))) {
     const key = `nxt/docs/assets/${name}`
-    if (!exists(key)) put(path.join(out, 'assets', name), key, IMAGE_TYPES[path.extname(name)], immutable)
+    if (!exists(key)) put(path.join(out, 'assets', name), key, ASSET_TYPES[path.extname(name)], immutable)
   }
   put(path.join(out, manifest.bundle), `nxt/docs/${channel}/${manifest.bundle}`, 'application/json', immutable)
   put(path.join(out, 'manifest.json'), `nxt/docs/${channel}/manifest.json`, 'application/json', 'public, max-age=60')

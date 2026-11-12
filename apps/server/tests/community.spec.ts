@@ -609,6 +609,42 @@ describe('CommunityService catalog', () => {
     })
   })
 
+  it('downloads a documentation image the community names, refusing plain http and oversized files', async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-community-'))
+    temporaryRoots.push(root)
+    let imageUrl = 'https://dl.example.test/nxt/docs/assets/0123456789abcdef.webp'
+    let imageBytes = new Uint8Array([82, 73, 70, 70])
+    const service = new CommunityService(
+      {
+        getSystemSetting: () => undefined,
+        putSystemSetting: () => {
+          throw new Error('unused')
+        },
+      },
+      new LocalCredentialStore(path.join(root, 'credentials')),
+      {
+        communityUrl: COMMUNITY,
+        fetch: (input) => {
+          const url = new URL(input instanceof Request ? input.url : String(input))
+          if (url.pathname === '/api/v1/docs/media')
+            return Promise.resolve(
+              Response.json({ ref: url.searchParams.get('ref'), label: '第 2 步', url: imageUrl, type: 'image/webp' }),
+            )
+          return Promise.resolve(new Response(imageBytes))
+        },
+      },
+    )
+    await expect(service.docMedia({ ref: 'widget:tour/step-2', channel: 'preview' })).resolves.toEqual({
+      ref: 'widget:tour/step-2',
+      label: '第 2 步',
+      bytes: imageBytes,
+    })
+    imageBytes = new Uint8Array(8 * 1024 * 1024 + 1)
+    await expect(service.docMedia({ ref: 'widget:tour', channel: 'stable' })).rejects.toThrow('文档图片过大。')
+    imageUrl = 'http://dl.example.test/a.webp'
+    await expect(service.docMedia({ ref: 'widget:tour', channel: 'stable' })).rejects.toThrow(/不安全/u)
+  })
+
   it('reports unreachable communities as readable errors', async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-community-'))
     temporaryRoots.push(root)

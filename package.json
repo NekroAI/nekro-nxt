@@ -50,7 +50,7 @@
     "sync:references": "node scripts/sync-workspace-references.mjs --write",
     "test:browser": "playwright test --config playwright.browser.config.ts",
     "test:journey:built": "playwright test",
-    "docs:shots": "rm -rf .local/docs-shots && playwright test -c playwright.docs.config.ts",
+    "docs:shots": "rm -rf .local/docs-shots && playwright test -c playwright.docs.config.ts; flows=$?; node scripts/docs-widgets.mjs && exit $flows",
     "dsh:plan-upgrade": "node scripts/plan-dsh-upgrade.mjs",
     "test:upgrade": "vitest run packages/client-migrations/tests/upgrade.spec.ts apps/server/tests/host-upgrade.spec.ts apps/server/tests/host-lifecycle-upgrade.spec.ts apps/server/tests/upgrade-backup.spec.ts apps/server/tests/upgrade-progress.spec.ts apps/server/tests/data-root-lease.spec.ts apps/server/tests/runtime-compatibility.spec.ts apps/server/tests/session-shutdown-inbox.spec.ts apps/server/tests/dsh-session-storage.spec.ts apps/server/tests/dsh-jsonl-persistence.spec.ts packages/storage-sqlite/tests/backup-files.spec.ts apps/desktop/tests/host-startup.spec.ts"
   },
@@ -62,10 +62,12 @@
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.0",
     "@vitest/coverage-v8": "4.1.8",
+    "esbuild": "0.25.12",
     "eslint": "9.39.5",
     "imagetracerjs": "^1.2.6",
     "postcss": "8.5.26",
     "postcss-selector-parser": "7.1.0",
+    "preact": "10.27.2",
     "prettier": "3.9.6",
     "sharp": "0.35.3",
     "tar": "7.5.22",
@@ -74,7 +76,8 @@
     "typescript": "6.0.3",
     "typescript-eslint": "8.67.0",
     "unrun": "0.3.1",
-    "vitest": "4.1.8"
+    "vitest": "4.1.8",
+    "yaml": "2.9.0"
   },
   "author": "NekroAI contributors",
   "homepage": "https://github.com/NekroAI/nekro-nxt#readme",

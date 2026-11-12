@@ -54,9 +54,22 @@ flow: quickstart
 
 ## 5. 接进群聊
 
-内置频道只有你自己能看到。要让智能体在 QQ 群、微信等平台里说话，打开「接线」，点「添加平台账号」，按平台提示登录或填写凭据。账号连上以后，它所在的群会出现在频道一栏，从频道拖一根线到智能体即可。
+内置频道只有你自己能看到。要让智能体在 QQ 群、微信等平台里说话，打开「接线」：
 
-![接线页：平台账号、频道和智能体三栏](shot:quickstart-wiring)
+```nxt:tour
+id: quickstart-wiring-tour
+title: 在接线页把群交给智能体
+shot: quickstart-wiring
+steps:
+  - mark: add
+    text: 点「添加平台账号」，按平台提示登录或填写凭据。
+  - mark: accounts
+    text: 连上的账号列在「平台账号」一栏。
+  - mark: channels
+    text: 账号所在的群和私聊出现在「频道」一栏，内置频道也在这里。
+  - mark: agents
+    text: 从频道拖一根线到右边「智能体」一栏里的她，她就开始在那个群里说话。
+```
 
 各平台的接入方式：
 

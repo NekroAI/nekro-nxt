@@ -43,7 +43,8 @@ keywords: [MCP, 文档 MCP, Claude, Cursor, AI 工具, 查文档, 接口, API, d
 | 工具 | 用途 |
 | --- | --- |
 | `search_docs` | 按关键词搜索文档，返回命中的页面和小节、链接和摘录 |
-| `read_doc` | 读一页文档，给出 `anchor` 时只读那一节 |
+| `read_doc` | 读一页文档，给出 `anchor` 时只读那一节；截图导览和图解换成文字，末尾列出这部分的图和图上画了什么 |
+| `get_doc_media` | 按 `read_doc` 给的编号取一张图，连同说明一起返回，能看图的客户端可以直接看 |
 | `list_docs` | 列出文档的全部栏目和页面 |
 | `search_extensions` | 搜索社区里公开的扩展，返回简介、审查结论和扩展页链接 |
 
@@ -57,7 +58,8 @@ keywords: [MCP, 文档 MCP, Claude, Cursor, AI 工具, 查文档, 接口, API, d
 | --- | --- |
 | `GET /api/v1/docs` | 栏目和页面目录 |
 | `GET /api/v1/docs/search?q=关键词&limit=5` | 搜索 |
-| `GET /api/v1/docs/pages/<栏目>/<页面>?anchor=小节` | 一页或一个小节的 Markdown |
+| `GET /api/v1/docs/pages/<栏目>/<页面>?anchor=小节` | 一页或一个小节的 Markdown，`media` 列出其中的图 |
+| `GET /api/v1/docs/media?ref=编号` | 一张图的地址和说明 |
 
 都可以加 `channel=preview` 读预览版。
 

@@ -16,6 +16,8 @@
     "apps/**/*.tsx",
     "packages/**/*.ts",
     "docs/site/flows/**/*.ts",
+    "docs/site/widgets/**/*.ts",
+    "docs/site/widgets/**/*.tsx",
     "playwright.config.ts",
     "playwright.docs.config.ts",
     "playwright.browser.config.ts",

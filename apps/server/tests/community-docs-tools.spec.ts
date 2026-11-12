@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { communityDocs, communityDocsTools } from '../src/community-docs-tools.ts'
+import { communityDocs, communityDocsMediaTool, communityDocsTools } from '../src/community-docs-tools.ts'
 import { CommunityError } from '../src/community.ts'
 import { sessionCapabilityPacks } from '../src/session-capability-packs.ts'
 
@@ -13,7 +13,11 @@ const shown = {
 }
 const hit = { ...shown, extra: 'dropped' }
 
-const fakeCommunity = (page: { markdown: string; headings?: { text: string; anchor: string }[] }) => {
+const fakeCommunity = (page: {
+  markdown: string
+  headings?: { text: string; anchor: string }[]
+  media?: { ref: string; label: string; url: string; type: string }[]
+}) => {
   const calls: unknown[] = []
   return {
     calls,
@@ -32,6 +36,17 @@ const fakeCommunity = (page: { markdown: string; headings?: { text: string; anch
           ui: ['透视'],
           headings: page.headings ?? [],
           markdown: page.markdown,
+          ...(page.media === undefined ? {} : { media: page.media }),
+        })
+      },
+      docMedia: (input: { ref: string }) => {
+        calls.push(['media', input])
+        if (input.ref === 'shot:gone')
+          return Promise.reject(new CommunityError(404, '没有这张图。', 'community-not-found'))
+        return Promise.resolve({
+          ref: input.ref,
+          label: '第 2 步：点「添加平台账号」。',
+          bytes: new Uint8Array([1, 2]),
         })
       },
     },
@@ -76,11 +91,55 @@ describe('community docs tools', () => {
     await expect(tools['nekro_nxt_docs_read']!.execute({ id: '../etc' }, NO_CONTEXT)).rejects.toThrow(/页面编号/u)
   })
 
+  it('lists the pictures of what was read, so the agent can send one into the channel', async () => {
+    const fake = fakeCommunity({
+      markdown: '> 截图导览「接线」：……',
+      media: [
+        { ref: 'widget:wiring-tour', label: '接线：全部 2 步', url: 'https://dl.example/a.webp', type: 'image/webp' },
+        {
+          ref: 'widget:wiring-tour/step-2',
+          label: '第 2 步：点「添加平台账号」。',
+          url: 'https://dl.example/b.webp',
+          type: 'image/webp',
+        },
+      ],
+    })
+    const port = communityDocs(fake.community, 'development')
+    const page = await toolsOf(port)['nekro_nxt_docs_read']!.execute({ id: 'start/quickstart' }, NO_CONTEXT)
+    expect(page).toMatchObject({
+      images: [
+        { ref: 'widget:wiring-tour', shows: '接线：全部 2 步' },
+        { ref: 'widget:wiring-tour/step-2', shows: '第 2 步：点「添加平台账号」。' },
+      ],
+    })
+    const saved: Uint8Array[] = []
+    const media = communityDocsMediaTool(
+      () => port,
+      (bytes) => {
+        saved.push(bytes)
+        return Promise.resolve({ assetId: 'asset_1', mediaType: 'image/webp', byteSize: bytes.byteLength })
+      },
+    )
+    await expect(media.execute({ ref: 'widget:wiring-tour/step-2' }, NO_CONTEXT)).resolves.toEqual({
+      assetId: 'asset_1',
+      shows: '第 2 步：点「添加平台账号」。',
+      mediaType: 'image/webp',
+    })
+    expect(saved).toEqual([new Uint8Array([1, 2])])
+    expect(fake.calls).toContainEqual(['media', { ref: 'widget:wiring-tour/step-2', channel: 'preview' }])
+    await expect(media.execute({ ref: 'https://evil.example/x.png' }, NO_CONTEXT)).rejects.toThrow(/images 里的编号/u)
+    await expect(media.execute({ ref: 'shot:gone' }, NO_CONTEXT)).rejects.toThrow(/没有 shot:gone 这张图/u)
+  })
+
   it('tells the agent what to do when the community cannot answer', async () => {
     const failing = (error: CommunityError) =>
       toolsOf(
         communityDocs(
-          { searchDocs: () => Promise.reject(error), readDoc: () => Promise.reject(error) },
+          {
+            searchDocs: () => Promise.reject(error),
+            readDoc: () => Promise.reject(error),
+            docMedia: () => Promise.reject(error),
+          },
           '0.9.0+0123456',
         ),
       )

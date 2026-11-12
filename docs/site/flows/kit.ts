@@ -26,12 +26,26 @@ const SHOT_STYLE = '[class^="_toasts_"] { visibility: hidden !important; }'
 export interface DocsFlow {
   /**
    * Screenshot in both themes, shown in pages as `shot:<name>`: the whole viewport, or cropped to the box around the
-   * given elements so the interface text stays readable in the page column.
+   * given elements so the interface text stays readable in the page column. `marks` records where named elements sit
+   * in the shot, for the numbered spots of a 截图导览 (`nxt:tour`).
    */
-  shot(name: string, target?: Locator | readonly Locator[], options?: { padding?: number }): Promise<void>
+  shot(
+    name: string,
+    target?: Locator | readonly Locator[],
+    options?: { padding?: number; marks?: Readonly<Record<string, Locator>> },
+  ): Promise<void>
   /** Records the text on screen without a screenshot, for 「」 words that only appear between shots. */
   see(): Promise<void>
 }
+
+interface Box {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+const round = (value: number): number => Math.round(value * 10_000) / 10_000
 
 const visibleText = (page: Page): Promise<string[]> =>
   page.evaluate(() => {
@@ -81,7 +95,7 @@ export const test = base.extend<{
   docs: async ({ page }, use, testInfo) => {
     const flow = path.basename(testInfo.file, '.flow.ts')
     const texts = new Set<string>()
-    const shots: Record<string, { width: number; height: number }> = {}
+    const shots: Record<string, { width: number; height: number; marks?: Record<string, Box> }> = {}
     const see = async (): Promise<void> => {
       for (const text of await visibleText(page)) texts.add(text)
     }
@@ -124,7 +138,23 @@ export const test = base.extend<{
           // Lossy WebP keeps interface text sharp at a tenth of the PNG's size.
           await sharp(image).webp({ quality: 88 }).toFile(path.join(SHOTS_DIR, `${name}.${theme}.webp`))
         }
-        shots[name] = { width: Math.round(clip.width), height: Math.round(clip.height) }
+        const marks: Record<string, Box> = {}
+        for (const [mark, element] of Object.entries(options?.marks ?? {})) {
+          const box = await element.boundingBox()
+          if (box === null) throw new Error(`截图 ${name} 的标注 ${mark} 不可见`)
+          // Relative to the shot, so the spots stay on the element whatever size the image is shown at.
+          marks[mark] = {
+            x: round((box.x - clip.x) / clip.width),
+            y: round((box.y - clip.y) / clip.height),
+            width: round(box.width / clip.width),
+            height: round(box.height / clip.height),
+          }
+        }
+        shots[name] = {
+          width: Math.round(clip.width),
+          height: Math.round(clip.height),
+          ...(Object.keys(marks).length === 0 ? {} : { marks }),
+        }
         await setTheme(page, original === 'dark' ? 'dark' : 'light')
       },
     })

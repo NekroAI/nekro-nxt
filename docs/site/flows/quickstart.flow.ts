@@ -51,9 +51,25 @@ test('quickstart', async ({ page, docs }) => {
   await docs.see()
   await page.getByRole('link', { name: '接线' }).click()
   await expect(page.getByRole('button', { name: /添加/u }).first()).toBeVisible()
-  await docs.shot('quickstart-wiring', [
-    page.getByRole('button', { name: '添加平台账号' }),
-    page.getByText('平台账号', { exact: true }).filter({ visible: true }),
-    page.getByText('小奈 的内置频道', { exact: true }).filter({ visible: true }),
-  ])
+  const column = (title: string) =>
+    page
+      .getByRole('heading', { name: title, exact: true })
+      .locator('xpath=ancestor::*[starts-with(@class, "_column_")][1]')
+  await docs.shot(
+    'quickstart-wiring',
+    [
+      page.getByRole('button', { name: '添加平台账号' }),
+      page.getByText('平台账号', { exact: true }).filter({ visible: true }),
+      page.getByText('小奈 的内置频道', { exact: true }).filter({ visible: true }),
+      column('智能体'),
+    ],
+    {
+      marks: {
+        add: page.getByRole('button', { name: '添加平台账号' }),
+        accounts: column('平台账号'),
+        channels: column('频道'),
+        agents: column('智能体'),
+      },
+    },
+  )
 })
