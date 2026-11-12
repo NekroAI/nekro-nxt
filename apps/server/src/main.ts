@@ -499,6 +499,13 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
       }
     } catch (error) {
       if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) throw error
+      const text = await readFile(lockPath, 'utf8')
+      let recorded: unknown
+      try {
+        recorded = JSON.parse(text)
+      } catch {
+        recorded = undefined
+      }
       const current = z
         .object({
           format: z.literal('nxt.server-upgrade-lock'),
@@ -508,11 +515,19 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
           token: z.string().uuid(),
         })
         .strict()
-        .parse(JSON.parse(await readFile(lockPath, 'utf8')))
-      if (current.version === 1 && current.pid !== process.pid && processIsAlive(current.pid)) {
-        throw new Error(`另一个 NekroNXT 正在升级这个数据目录（PID ${current.pid}，版本 ${current.releaseId}）`)
+        .safeParse(recorded)
+      if (!current.success) {
+        // A process killed between creating the lock and writing it leaves an empty or partial file; it owns nothing.
+        console.error('[nekro-nxt] 升级锁文件内容不完整，按上次中断留下的旧锁处理。')
+        await rename(lockPath, `${lockPath}.stale-${token}`)
+        continue
       }
-      await rename(lockPath, `${lockPath}.stale-${current.token}`)
+      if (current.data.version === 1 && current.data.pid !== process.pid && processIsAlive(current.data.pid)) {
+        throw new Error(
+          `另一个 NekroNXT 正在升级这个数据目录（PID ${current.data.pid}，版本 ${current.data.releaseId}）`,
+        )
+      }
+      await rename(lockPath, `${lockPath}.stale-${current.data.token}`)
     }
   }
   throw new Error('Cannot acquire the upgrade lock.')

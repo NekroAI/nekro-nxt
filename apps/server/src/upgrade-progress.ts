@@ -57,7 +57,12 @@ export async function pendingUpgradeRecovery(
   dataRoot: string,
   releaseId: string,
 ): Promise<HostUpgradeStatus | undefined> {
-  const previous = await readProgress(filenameFor(dataRoot))
+  // Writes are atomic, so an unreadable file was edited or damaged by something else; it must not keep the Host down.
+  const previous = await readProgress(filenameFor(dataRoot)).catch((error: unknown) => {
+    if (!(error instanceof SyntaxError || error instanceof z.ZodError)) throw error
+    console.error('[nekro-nxt] 升级进度文件读不出来，按没有待处理的升级失败继续启动。')
+    return undefined
+  })
   if (previous?.releaseId !== releaseId || previous.status.phase !== 'recovery' || previous.automaticRetryAllowed)
     return undefined
   const status = previous.status

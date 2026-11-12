@@ -125,6 +125,27 @@ describe('Server production entry', () => {
     }
   })
 
+  it('starts over an upgrade lock left empty by a process killed while creating it', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await mkdir(path.join(dataRoot, 'backups'), { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    await writeFile(path.join(dataRoot, 'backups', 'upgrade.lock'), '')
+
+    const handle = await startNekroServer({ dataRoot, distIndex, releaseId: 'release-empty-lock-test' })
+    try {
+      const ready = await fetch(`http://127.0.0.1:${handle.port}/health/ready`)
+      await expect(ready.json()).resolves.toEqual({ status: 'ready', releaseId: 'release-empty-lock-test' })
+      const backups = await readdir(path.join(dataRoot, 'backups'))
+      expect(backups).not.toContain('upgrade.lock')
+      expect(backups.some((name) => name.startsWith('upgrade.lock.stale-'))).toBe(true)
+    } finally {
+      await handle.stop()
+    }
+  })
+
   it('refuses to start after an upgrade backup failure and leaves a recovery journal', async () => {
     const directory = await createTemporaryRoot()
     const dataRoot = path.join(directory, 'data')

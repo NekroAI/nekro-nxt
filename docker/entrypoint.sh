@@ -15,8 +15,11 @@ case "$uid$gid" in
   *[!0-9]*) echo "[nekro-nxt] NEKRO_UID 与 NEKRO_GID 必须是数字。" >&2; exit 1 ;;
 esac
 
-if [ "$(stat -c '%u:%g' "$NEKRO_DATA")" != "$uid:$gid" ]; then
-  # First start on this directory, or files left by an earlier root run: hand the whole tree over once.
+# First start on this directory, or files left by an earlier root run (such as backups an old image wrote as root
+# inside an already handed-over directory): hand them over. Stops at the first such file, so a clean tree costs one walk.
+stray="$(find "$NEKRO_DATA" \( ! -uid "$uid" -o ! -gid "$gid" \) -print -quit)"
+if [ -n "$stray" ]; then
+  echo "[nekro-nxt] 数据目录里有不属于运行用户的文件（例如 $stray），正在改为 $uid:$gid。" >&2
   chown -R "$uid:$gid" "$NEKRO_DATA"
 fi
 

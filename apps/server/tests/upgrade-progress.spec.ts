@@ -1,10 +1,10 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import type * as BackupOperations from '../src/upgrade-backup.js'
-import { createUpgradeProgress, markUpgradeProgressFailure } from '../src/upgrade-progress.js'
+import { createUpgradeProgress, markUpgradeProgressFailure, pendingUpgradeRecovery } from '../src/upgrade-progress.js'
 
 const faults = vi.hoisted(() => ({ remaining: 0 }))
 vi.mock('../src/upgrade-backup.js', async (importOriginal) => {
@@ -77,6 +77,15 @@ describe('owned upgrade progress', () => {
     await vi.advanceTimersByTimeAsync(60_000)
     expect(await readFile(file(root), 'utf8')).toBe(closed)
     await expect(writer.update({ phase: 'migrating' })).rejects.toThrow('已关闭')
+  })
+
+  it('does not hold startup on a progress file it cannot read', async () => {
+    const root = await fixture()
+    await mkdir(path.dirname(file(root)), { recursive: true })
+    for (const damaged of ['', '{"format":', '{"format":"nxt.host-upgrade-progress"}']) {
+      await writeFile(file(root), damaged)
+      await expect(pendingUpgradeRecovery(root, 'synthetic-release')).resolves.toBeUndefined()
+    }
   })
 
   it('recovers from a failed write instead of permanently poisoning the publication chain', async () => {
