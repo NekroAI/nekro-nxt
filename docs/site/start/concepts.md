@@ -46,27 +46,25 @@ edges:
 
 一条群消息到她的回复，大致走这几步：
 
-```nxt:diagram
+```nxt:pipeline
 id: concepts-message-path
 title: 一条群消息怎么变成回复
-type: flow
-animate: true
-nodes:
-  - id: member
-    label: 群友发言
+stages:
+  - label: 群友发言
     note: 比如 @ 了她
-  - id: account
-    label: 平台账号
-    note: 收到这条消息
-  - id: channel
-    label: 频道
+    detail: 群里有人说了一句话，比如 @ 了她，或者回复了她上一条消息。
+  - label: 平台账号
+    note: 收到消息
+    detail: 你在「接线」里添加的机器人账号收到这条消息，转给 NekroNXT。
+  - label: 频道
     note: 记进聊天记录
-  - id: agent
-    label: 智能体
-    note: 按触发方式决定开口
-  - id: reply
-    label: 回到群里
-    note: 经同一个账号发出
+    detail: 消息记进这个群对应的频道。不管她回不回，频道里都留着完整的聊天记录。
+  - label: 智能体
+    note: 决定要不要开口
+    detail: 接在这个频道上的智能体按「何时回复」判断这条消息要不要叫醒她；叫醒后她读最近的聊天，用模型想好怎么回，需要时调用工具。
+  - label: 回到群里
+    note: 经同一账号发出
+    detail: 她把回复发进频道，再经收到消息的那个平台账号发回群里。
 ```
 
 ## 智能体

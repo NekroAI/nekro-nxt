@@ -46,7 +46,7 @@ const harness = (width, background) => `<!doctype html>
 <style>html, body { margin: 0; background: ${background}; } #host { width: ${width}px; }</style>
 <div id="host"></div>
 <script type="module">
-  import { mount, flowTimeline } from '/runtime.js'
+  import { mount, animationLength } from '/runtime.js'
   let unmount = () => {}
   window.showWidget = async (widget, poster) => {
     unmount()
@@ -58,7 +58,7 @@ const harness = (width, background) => `<!doctype html>
     // Flows measure their boxes after the first render and draw the arrows on the next.
     for (let frame = 0; frame < 3; frame += 1) await new Promise((resolve) => requestAnimationFrame(resolve))
   }
-  window.flowTotal = (edges) => flowTimeline(edges).total
+  window.animationLength = animationLength
   window.harnessReady = true
 </script>`
 
@@ -105,13 +105,12 @@ async function renderWidget(widget, resolved, { stills, gifs }, outDir, sharp) {
   }
   if (!widgetAnimates(widget)) return { status: 'passed', posters }
   // Sent into chats, where light is the safe default; every frame is cut to the same box.
-  const total = await gifs.page.evaluate(
-    (edges) => /** @type {any} */ (globalThis).flowTotal(edges),
-    widget.data.edges.length,
-  )
+  const total = await gifs.page.evaluate((value) => /** @type {any} */ (globalThis).animationLength(value), resolved)
   await show(gifs.page, resolved, { state: 'overview', time: total })
-  const clip = await gifs.page.locator('#host').boundingBox()
-  if (clip === null) throw new Error('组件没有显示出来')
+  const box = await gifs.page.locator('#host').boundingBox()
+  if (box === null) throw new Error('组件没有显示出来')
+  // Tall enough for its tallest state, since a chat changes height between modes.
+  const clip = { ...box, height: Math.max(box.height, ...Object.values(posters).map((poster) => poster.height)) }
   const frames = []
   for (let time = 0; time <= total; time += GIF_FRAME_MS) {
     await show(gifs.page, resolved, { state: 'overview', time })

@@ -108,18 +108,81 @@ await docs.shot('quickstart-wiring', targets, { marks: { add: page.getByRole('bu
 - `type: compare`：几列并排对照，`tone` 用 `positive`、`neutral`、`negative` 标出好坏。
 
 ```yaml
+id: concepts-map
+title: 几样东西怎么连在一起
+type: flow
+nodes:
+  - id: account
+    label: 平台账号                # 最多 16 字
+    note: QQ 机器人、微信……         # 最多 40 字
+    at: [0, 0]
+  - id: channel
+    label: 频道
+    at: [1, 0]
+edges:
+  - from: account
+    to: channel
+    label: 带进来
+```
+
+### 链路动画 `nxt:pipeline`
+
+一样东西依次经过固定的几环，一个点沿着走，下方说明这一环做什么。读者可以播放、暂停、前后单步，点某一环停在那里。每一环另有一张静态图，另出一张 GIF。比 `flow` 的 `animate` 多一层：每一环都有一段说明。
+
+```yaml
 id: concepts-message-path
 title: 一条群消息怎么变成回复
-type: flow
-animate: true
-nodes:
-  - id: member
-    label: 群友发言                # 最多 16 字
-    note: 比如 @ 了她              # 最多 40 字
-  - id: account
-    label: 平台账号
-    note: 收到这条消息
+stages:                           # 2–8 环
+  - label: 群友发言                # 最多 8 字
+    note: 比如 @ 了她              # 可选，最多 16 字
+    detail: 群里有人说了一句话，比如 @ 了她。   # 最多 120 字
 ```
+
+### 聊天回放 `nxt:chat`
+
+一段虚构的群聊逐条出现。写了 `modes` 时，上方可以切换方式，同一段聊天按所选方式重放；别的方式会回、这种方式不回的消息下面标出来。每种方式各一张静态图；GIF 依次播放每种方式。不写 `modes` 时，`reply` 直接写她的回复。
+
+```yaml
+id: response-trigger-modes
+title: 同一段群聊，三种触发方式
+agent: 小荧                       # 群里显示的名字，虚构
+modes:                            # 可选，2–4 种
+  - id: mention
+    label: 被提及时
+    note: 只有 @ 她或回复她的消息时才叫醒她
+  - id: smart
+    label: 智能响应
+messages:                         # 最多 14 条
+  - from: 小林
+    text: '@小荧 周六山上会下雨吗'  # @ 开头要加引号
+    reply:
+      mention: 周六多云转晴。        # 没写的方式就是不回
+      smart: mention              # 和另一种方式回得一样
+```
+
+### 排查向导 `nxt:wizard`
+
+一次问一个问题，按回答走到下一问，最后落到一个办法。答过的问题留在上方，点一下回到那里。文字版是整棵问答树，智能体可以照着在聊天里一问一答地带用户排查；只出第一问的静态图，不出 GIF。
+
+```yaml
+id: troubleshoot-no-reply
+title: 群里没反应
+steps:                            # 第一步是起点，必须是问题
+  - id: paused
+    ask: 频道右侧的「暂停回应」开着吗？
+    choices:                      # 2–4 个
+      - label: 开着
+        next: resume
+      - label: 没开
+        next: inspect
+  - id: resume
+    answer: 关掉「暂停回应」，或在群里发 /resume。
+    link: ../channels/response.md#暂停回应   # 可选，和正文链接写法一样；本页小节写 '#小节'
+  - id: inspect
+    answer: 打开「透视」看她这一轮做了什么。
+```
+
+每一步都要走得到，问题不能绕回去。问题、选项、办法和链路说明里的「」词和正文一样会核对。
 
 ### 出图与发布
 

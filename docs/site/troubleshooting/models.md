@@ -9,22 +9,87 @@ keywords: [不回复, 没反应, 群里没反应, at了没用, 不说话, 回复
 
 ## 群里没反应
 
-先分清是“她没被叫醒”，还是“叫醒了但失败了”。
+先分清是“她没被叫醒”，还是“叫醒了但失败了”。跟着下面的问题一步步排查：
 
-**1. 看右上角的铃铛。** 「需要关注」里有这个智能体的提醒，说明出了错，按下面的小节处理：
-
-- 写着模型当前不可用：见[模型不可用](#模型不可用)；
-- 写着本轮失败、回复失败：见[回复失败](#回复失败)。
-
-**2. 铃铛里什么都没有**，多半是她没被叫醒。打开这个频道，在右侧检查：
-
-- 「何时回复」：如果是“仅观察”，她只记录不回复；如果是“被提及时”，要真的 @ 她或回复她的消息；
-- 「暂停回应」是不是开着；
-- 频道是不是还没接线（右侧显示“还没有智能体回复这个频道”）。
-
-**3. 打开频道顶部的「透视」**，看她这一轮做了什么。只有“发送频道消息”成功了才算回复；模型想说的话没有通过发送工具发出去，群里是看不到的。
-
-如果透视里根本没有这一轮，说明消息没进来，见[平台接入排障](platforms.md#群里发了消息频道里没有)。
+```nxt:wizard
+id: troubleshoot-no-reply
+title: 群里没反应
+steps:
+  - id: bell
+    ask: 右上角铃铛的「需要关注」里，有这个智能体的提醒吗？
+    choices:
+      - label: 有
+        next: alert
+      - label: 没有
+        next: trigger
+  - id: alert
+    ask: 提醒里写的是什么？
+    choices:
+      - label: 模型当前不可用
+        next: model-gone
+      - label: 本轮失败或回复失败
+        next: turn-failed
+  - id: trigger
+    ask: 打开这个频道，右侧「何时回复」选的是哪一种？
+    choices:
+      - label: 仅观察
+        next: observe-only
+      - label: 被提及时
+        next: mentioned
+      - label: 其他
+        next: paused
+  - id: mentioned
+    ask: 群友是真的 @ 了她，或者回复了她的消息吗？
+    choices:
+      - label: 是
+        next: paused
+      - label: 不是
+        next: not-mentioned
+  - id: paused
+    ask: 频道右侧的「暂停回应」开着吗？
+    choices:
+      - label: 开着
+        next: resume
+      - label: 没开
+        next: wired
+  - id: wired
+    ask: 频道右侧是不是写着“还没有智能体回复这个频道”？
+    choices:
+      - label: 是
+        next: not-wired
+      - label: 不是
+        next: inspect
+  - id: inspect
+    ask: 打开频道顶部的「透视」，能找到她这一轮吗？
+    choices:
+      - label: 找不到
+        next: not-received
+      - label: 找得到
+        next: not-sent
+  - id: model-gone
+    answer: 她用的模型已经不在供应商的模型列表里了。打开这个智能体，在「模型」里换一个可用的模型。
+    link: '#模型不可用'
+  - id: turn-failed
+    answer: 叫醒了，但调用模型出错。按提醒里的原因处理。
+    link: '#回复失败'
+  - id: observe-only
+    answer: “仅观察”只记录不回复。改成“被提及时”或其他方式，选完立刻生效。
+    link: ../channels/response.md#何时回复
+  - id: not-mentioned
+    answer: “被提及时”只在有人 @ 她或回复她时开口。直接 @ 她试试；想让她更主动，改成“智能响应”。
+    link: ../channels/response.md#何时回复
+  - id: resume
+    answer: 暂停期间什么都不会叫醒她。关掉「暂停回应」，或在群里发 /resume。
+    link: ../channels/response.md#暂停回应
+  - id: not-wired
+    answer: 这个频道还没接给任何智能体。到「接线」从这个频道拉一根线到智能体。
+    link: ../channels/wiring.md
+  - id: not-received
+    answer: 这条消息没有进到 NekroNXT，问题出在平台接入。
+    link: platforms.md#群里发了消息频道里没有
+  - id: not-sent
+    answer: 她被叫醒了，但话没发出去。看透视里她这一轮做了什么：只有“发送频道消息”成功了，群里才看得到；有报错就按报错处理。
+```
 
 ## 模型不可用
 

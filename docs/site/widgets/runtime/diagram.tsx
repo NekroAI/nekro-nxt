@@ -1,5 +1,6 @@
 /** @jsxImportSource preact */
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks'
+import { type Control, useClock } from './clock.js'
 import type { DiagramData, Mode } from './types.js'
 
 type FlowData = Extract<DiagramData, { type: 'flow' }>
@@ -59,76 +60,13 @@ const between = (from: Rect, to: Rect) => {
   }
 }
 
-const useReducedMotion = () => {
-  const [reduced] = useState(
-    () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches,
-  )
-  return reduced
-}
-
-/**
- * Live: plays once when it scrolls into view and stops on the finished picture; the button pauses, resumes or replays.
- * Posters take the time they are given.
- */
-const useFlowClock = (mode: Mode, total: number, animate: boolean, root: { current: HTMLElement | null }) => {
-  const reduced = useReducedMotion()
-  const still = mode.kind === 'poster' || !animate || reduced
-  const [time, setTime] = useState(still ? total : 0)
-  const [running, setRunning] = useState(false)
-  const clock = useRef(time)
-  const started = useRef(false)
-  useEffect(() => {
-    if (still || root.current === null) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting) || started.current) return
-        started.current = true
-        setRunning(true)
-        observer.disconnect()
-      },
-      { threshold: 0.5 },
-    )
-    observer.observe(root.current)
-    return () => observer.disconnect()
-  }, [still, root])
-  useEffect(() => {
-    if (!running) return
-    let frame = 0
-    let last = performance.now()
-    const tick = (now: number) => {
-      clock.current = Math.min(total, clock.current + (now - last))
-      last = now
-      setTime(clock.current)
-      if (clock.current >= total) setRunning(false)
-      else frame = requestAnimationFrame(tick)
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
-  }, [running, total])
-  const control: Control = still
-    ? null
-    : {
-        label: running ? '暂停' : time >= total ? '重播' : time > 0 ? '继续' : '播放',
-        toggle: () => {
-          started.current = true
-          if (running) return setRunning(false)
-          if (clock.current >= total) {
-            clock.current = 0
-            setTime(0)
-          }
-          setRunning(true)
-        },
-      }
-  return { time: mode.kind === 'poster' ? mode.time : time, control }
-}
-
 const Flow = ({ data, mode, onControl }: { data: FlowData; mode: Mode; onControl: (control: Control) => void }) => {
   const canvas = useRef<HTMLDivElement>(null)
   const [rects, setRects] = useState<Map<string, Rect>>(new Map())
   const [width, setWidth] = useState(0)
   const [hot, setHot] = useState<string | null>(null)
   const timeline = flowTimeline(data.edges.length)
-  const { time, control } = useFlowClock(mode, timeline.total, data.animate, canvas)
+  const { time, control } = useClock(mode, timeline.total, data.animate, canvas)
   // The header shows the button; it changes only with the label, and toggle reads the clock through refs.
   useEffect(() => onControl(control), [control?.label])
 
@@ -260,8 +198,6 @@ const Flow = ({ data, mode, onControl }: { data: FlowData; mode: Mode; onControl
     </div>
   )
 }
-
-type Control = { readonly label: string; readonly toggle: () => void } | null
 
 /** 图解: a flow (boxes and arrows, optionally animated), stacked layers, or columns compared side by side. */
 export const Diagram = ({ title, data, mode }: { title: string; data: DiagramData; mode: Mode }) => {
