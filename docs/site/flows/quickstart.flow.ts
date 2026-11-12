@@ -15,6 +15,7 @@ test('quickstart', async ({ page, docs }) => {
   await docs.shot('quickstart-model-key', [
     page.getByText('全部供应商', { exact: true }),
     page.getByRole('button', { name: '添加模型' }),
+    page.getByRole('button', { name: '保存供应商' }),
   ])
   await page.getByRole('button', { name: '保存供应商' }).click()
   await expect(page.getByText('API 密钥已保存', { exact: true })).toBeVisible()

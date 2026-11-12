@@ -17,6 +17,8 @@ export interface AttentionItem {
   readonly outboundId?: string
   /** The connection or agent several items share; dismissing by it keeps the cause quiet until it recovers. */
   readonly cause?: { readonly key: string; readonly label: string }
+  /** The troubleshooting section for this kind of problem, a stable-channel documentation address. */
+  readonly help?: string
 }
 
 const severity: Record<HostAttentionItem['severity'], AttentionSeverity> = {
@@ -56,6 +58,7 @@ export const toAttentionItem = (item: HostAttentionItem): AttentionItem => ({
   href: hrefOf(item),
   ...(item.related.outboundId ? { outboundId: item.related.outboundId } : {}),
   ...(item.cause ? { cause: { ...item.cause } } : {}),
+  ...(item.help ? { help: item.help } : {}),
 })
 
 /** One shared attention list per runtime: fetched once, refreshed on SSE invalidation and reconnects. */

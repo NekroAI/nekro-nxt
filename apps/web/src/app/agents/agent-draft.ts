@@ -127,14 +127,16 @@ const CAPABILITY_KEYS = [
   'commandNetwork',
   'communityFeedbackAuto',
   'voiceTranscription',
+  'communityDocs',
 ] as const satisfies readonly (keyof Capabilities)[]
 type BooleanCapability = (typeof CAPABILITY_KEYS)[number]
-const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'dynamicCreation', 'scheduledTasks'] as const
+const OTHER_CAPABILITIES = ['subagents', 'webSearch', 'communityDocs', 'dynamicCreation', 'scheduledTasks'] as const
 const ACCESS_KEYS = ['fileTools', 'developmentShell', 'unrestrictedFileAccess'] as const
 
 const CAPABILITY_LABEL: Record<(typeof OTHER_CAPABILITIES)[number], string> = {
   subagents: '子对话',
   webSearch: '网页搜索',
+  communityDocs: '查阅社区文档',
   dynamicCreation: '动态创造',
   scheduledTasks: '定时任务',
 }

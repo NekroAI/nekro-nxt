@@ -164,6 +164,7 @@ describe('product store Host mutations', () => {
             commandNetwork: true,
             communityFeedbackAuto: false,
             voiceTranscription: false,
+            communityDocs: true,
             commandAccounts: [],
             extensionAutonomy: 'manual',
             extensionRequesters: 'everyone',

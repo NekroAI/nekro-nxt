@@ -217,6 +217,7 @@ describe('session capability packs', () => {
     scheduledTasks: true,
     fileTools: true,
     developmentShell: false,
+    communityDocs: false,
   }
 
   it('offers scheduled tasks and file management beside the extension packs', () => {

@@ -114,6 +114,8 @@ export interface AgentSummary {
     readonly communityFeedbackAuto: boolean
     /** Voice messages reach the agent with a transcript. */
     readonly voiceTranscription: boolean
+    /** Looking up the user documentation on the community site. */
+    readonly communityDocs: boolean
     /** Linked accounts this agent's commands act as; each names an account in 设置 → 关联账号. */
     readonly commandAccounts: CommandAccountGrant[]
     readonly extensionAutonomy: 'manual' | 'confirm' | 'autonomous'

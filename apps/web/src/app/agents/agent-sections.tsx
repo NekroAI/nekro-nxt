@@ -560,8 +560,10 @@ export function CapabilitiesSection({
     const item = ACCESS_SWITCHES.find((entry) => entry.key === key)
     confirmIfRisky(enabled && key !== 'fileTools', `允许${name}${item?.label ?? ''}？`, item?.description ?? '', apply)
   }
-  const setCapability = (key: 'subagents' | 'webSearch' | 'dynamicCreation' | 'scheduledTasks', enabled: boolean) =>
-    update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
+  const setCapability = (
+    key: 'subagents' | 'webSearch' | 'communityDocs' | 'dynamicCreation' | 'scheduledTasks',
+    enabled: boolean,
+  ) => update((current) => ({ ...current, capabilities: { ...current.capabilities, [key]: enabled } }))
 
   return (
     <PropertyGroup id="profile-capabilities" title="能力">
@@ -674,6 +676,16 @@ export function CapabilitiesSection({
             <WebSearchCredential />
           </PropertyRow>
         )}
+        <PropertyRow
+          label="查阅社区文档"
+          tip="有人问 NekroNXT 怎么用、遇到报错时，查 nxt.nekro.ai 上的使用文档再回答。问题会发到社区站搜索"
+        >
+          <Switch
+            label="查阅社区文档"
+            checked={caps.communityDocs}
+            onCheckedChange={(checked) => setCapability('communityDocs', checked)}
+          />
+        </PropertyRow>
         <PropertyRow label="动态创造" tip="在频道里按需求制作新工具和界面">
           <Switch
             label="动态创造"

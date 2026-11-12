@@ -573,6 +573,7 @@ export class WorkspaceProjections {
         ),
         action: { kind: 'resolve-delivery', label: '处理' },
         ...(cause === undefined ? {} : { cause }),
+        help: 'https://nxt.nekro.ai/docs/troubleshooting/platforms#收得到发不出去',
         occurredAt: record.intent.createdAt,
       })
     }
@@ -603,6 +604,7 @@ export class WorkspaceProjections {
           ),
           action: { kind: 'open-channel', label: '查看' },
           cause: this.#agentCause(binding.agentId),
+          help: 'https://nxt.nekro.ai/docs/troubleshooting/models#回复失败',
           occurredAt: now,
         })
       }
@@ -624,6 +626,7 @@ export class WorkspaceProjections {
             status === 'failed' ? `${adapterName} 连接异常，收不到新消息。` : `${adapterName} 连接中断，正在重连。`,
           action: { kind: 'open-connection', label: '查看连接' },
           cause: { key: `connection:${connection.id}`, label: connection.alias ?? adapterName },
+          help: 'https://nxt.nekro.ai/docs/troubleshooting/platforms#先看账号状态',
           occurredAt: since,
         })
       } else {
@@ -671,6 +674,7 @@ export class WorkspaceProjections {
               : `主模型 ${commit.revision.model.provider}/${commit.revision.model.model} 当前不可用，${name}无法回复。`,
           action: { kind: 'open-agent', label: models === undefined ? '查看智能体' : '选择模型' },
           cause: { key: `agent:${agentId}`, label: name },
+          help: 'https://nxt.nekro.ai/docs/troubleshooting/models#模型不可用',
           occurredAt: commit.revision.createdAt,
         })
         continue
@@ -690,6 +694,7 @@ export class WorkspaceProjections {
           detail: truncate(diagnostics.blockers[0] ?? '主模型看不懂图片，群里的图片会被跳过。', 400),
           action: { kind: 'open-agent', label: '添加视觉模型' },
           cause: { key: `agent:${agentId}`, label: name },
+          help: 'https://nxt.nekro.ai/docs/troubleshooting/models#看不懂图片',
           occurredAt: commit.revision.createdAt,
         })
       }

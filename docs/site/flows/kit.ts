@@ -97,6 +97,12 @@ export const test = base.extend<{
         let clip = { x: 0, y: 0, width: viewport.width, height: viewport.height }
         if (target !== undefined) {
           const targets: readonly Locator[] = 'boundingBox' in target ? [target] : target
+          // The first element leads: it is scrolled to the top, clear of sticky bars, and the others sit below it.
+          await targets[0]?.evaluate((element) => {
+            if (!(element instanceof HTMLElement)) return
+            element.style.scrollMarginTop = '96px'
+            element.scrollIntoView({ block: 'start' })
+          })
           const boxes = []
           for (const element of targets) {
             const box = await element.boundingBox()

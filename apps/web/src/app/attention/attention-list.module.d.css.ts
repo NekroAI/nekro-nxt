@@ -4,6 +4,7 @@ declare const styles: {
   readonly chevron: string
   readonly compact: string
   readonly focusHead: string
+  readonly help: string
   readonly icon: string
   readonly info: string
   readonly list: string

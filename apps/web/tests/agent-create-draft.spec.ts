@@ -28,6 +28,7 @@ describe('createAgentDraft', () => {
       commandAccounts: [],
       communityFeedbackAuto: false,
       voiceTranscription: false,
+      communityDocs: true,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',
       extensionConfigRequesters: 'admins',

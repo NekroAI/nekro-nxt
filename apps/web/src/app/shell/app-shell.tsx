@@ -7,6 +7,7 @@ import {
   Cable,
   ArrowLeftRight,
   ChevronLeft,
+  CircleHelp,
   LockOpen,
   Menu as MenuIcon,
   MessagesSquare,
@@ -51,6 +52,8 @@ import { useCurrentCrumb, useCurrentPageBar, usePageBarActionsSlot } from './cru
 import { useRailSteering } from './rail-steering.js'
 import { useSwitchTab, useTabHistory } from './tab-history.js'
 import styles from './shell.module.css'
+import type { ProductUpdateStatus } from '@nekro-nxt/contracts'
+import { docsHelpHref } from './docs-help.js'
 import { updateLabel, useProductUpdates, versionDescription, versionLabel } from './product-updates.js'
 
 export const SPACES = [
@@ -424,7 +427,14 @@ function PhoneTitle({
   )
 }
 
-function TopBar({ onSearch }: { readonly onSearch: () => void }) {
+function TopBar({
+  onSearch,
+  release,
+}: {
+  readonly onSearch: () => void
+  readonly release: ProductUpdateStatus | undefined
+}) {
+  const { pathname } = useLocation()
   const phone = usePhone()
   const bar = useCurrentPageBar()
   const setActions = usePageBarActionsSlot()
@@ -531,6 +541,16 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
           <span>搜索</span>
           <Kbd>⌘K</Kbd>
         </Pressable>
+        <a
+          className={styles.bell}
+          href={docsHelpHref(pathname, release?.channel)}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="使用文档"
+          title="打开这一页的使用文档"
+        >
+          <CircleHelp aria-hidden="true" strokeWidth={1.7} />
+        </a>
         <Popover
           label="需要关注"
           open={bell.open}
@@ -553,6 +573,7 @@ function TopBar({ onSearch }: { readonly onSearch: () => void }) {
             <b>需要关注</b>
           </div>
           <AttentionList
+            docsChannel={release?.channel}
             compact
             focus={bell.focus}
             onClearFocus={bellStore.clearFocus}
@@ -575,9 +596,8 @@ function Clock() {
 }
 
 /** The host's version at the right of the status bar; a newer release turns it into a link to the release page. */
-function VersionStatus() {
+function VersionStatus({ status }: { readonly status: ProductUpdateStatus | undefined }) {
   const navigate = useGo()
-  const { status } = useProductUpdates()
   if (status === undefined) return null
   const checked =
     status.checkedAt === undefined
@@ -609,7 +629,7 @@ function VersionStatus() {
   )
 }
 
-function StatusBar() {
+function StatusBar({ release }: { readonly release: ProductUpdateStatus | undefined }) {
   const navigate = useGo()
   const connections = useProductStore((state) => state.connections)
   const agents = useProductStore((state) => state.agents)
@@ -656,7 +676,7 @@ function StatusBar() {
           未加密连接
         </Pressable>
       ) : null}
-      <VersionStatus />
+      <VersionStatus status={release} />
       <Clock />
     </footer>
   )
@@ -696,6 +716,8 @@ export function AppShell() {
   useHistoryTrail()
   useTabHistory()
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // One read of the host's release serves the status bar's version and the help button's documentation channel.
+  const { status: release } = useProductUpdates()
   useEffect(() => {
     removeBootSplash()
   }, [])
@@ -711,7 +733,7 @@ export function AppShell() {
   }, [])
   return (
     <div className={styles.app} data-immersive={immersive || undefined} data-tall={immersive || lingering || undefined}>
-      <TopBar onSearch={() => setPaletteOpen(true)} />
+      <TopBar onSearch={() => setPaletteOpen(true)} release={release} />
       <Rail />
       <main className={styles.main}>
         <ReleaseBanner />
@@ -726,7 +748,7 @@ export function AppShell() {
           </div>
         </Suspense>
       </main>
-      <StatusBar />
+      <StatusBar release={release} />
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   )

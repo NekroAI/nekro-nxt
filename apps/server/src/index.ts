@@ -270,6 +270,7 @@ import {
 import { extensionReferenceTool } from './extension-reference-tool.js'
 import { sessionCapabilityPacks } from './session-capability-packs.js'
 import { communityBrowseTools } from './community-agent-tools.js'
+import { communityDocsTools, type CommunityDocsPort } from './community-docs-tools.js'
 import { findInputDetail, normalizeSessionEvents } from './channel-runtime-events.js'
 import type { RuntimeProjectionEvent } from './channel-runtime-projection.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
@@ -574,6 +575,8 @@ export interface DshHostRuntimeOptions {
    * separate executable, `undefined` means none is available and those agents keep ordinary tool calls.
    */
   readonly codeRunNode?: () => { readonly executable?: string } | undefined
+  /** The community site's user documentation for agents granted 「查阅社区文档」; absent where no community is wired. */
+  readonly communityDocs?: () => CommunityDocsPort | undefined
   /** Transcription for the agent's `audio_transcribe` tool; absent where speech recognition is not wired. */
   readonly speech?: Pick<SpeechService, 'transcribeOnce'>
   /** The running release (`NEKRO_RELEASE_ID`) for the `nekro_nxt_version` tool; absent where the host has none. */
@@ -3391,6 +3394,7 @@ export class DshHostRuntime implements AgentSessionDriver {
   readonly #developmentWorkspaceRoot: string | undefined
   readonly #codeRunNode: DshHostRuntimeOptions['codeRunNode']
   readonly #speech: DshHostRuntimeOptions['speech']
+  readonly #communityDocs: DshHostRuntimeOptions['communityDocs']
   readonly #releaseId: string | undefined
   readonly #hostRestart: (() => HostRestartRequester | undefined) | undefined
   readonly #commandAccounts: CommandCredentialSources | undefined
@@ -3482,6 +3486,7 @@ export class DshHostRuntime implements AgentSessionDriver {
     this.#developmentWorkspaceRoot = options.developmentWorkspaceRoot
     this.#codeRunNode = options.codeRunNode
     this.#speech = options.speech
+    this.#communityDocs = options.communityDocs
     this.#releaseId = options.releaseId
     this.#hostRestart = options.hostRestart
     this.#commandAccounts = options.commandAccounts
@@ -4987,6 +4992,9 @@ export class DshHostRuntime implements AgentSessionDriver {
         // Browsing the community is read-only and open at every autonomy level (#121).
         for (const tool of communityBrowseTools(() => governancePort()?.community())) agentContext.tools.register(tool)
       }
+      const communityDocs = this.#communityDocs
+      if (communityDocs !== undefined && revision.capabilities.communityDocs)
+        for (const tool of communityDocsTools(communityDocs)) agentContext.tools.register(tool)
       mountDelegationCapabilities(agentContext, revision, this.#subConversations, this.#subConversationStore, () =>
         this.listAvailableLlmModels(),
       )

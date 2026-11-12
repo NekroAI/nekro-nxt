@@ -1,6 +1,6 @@
 // Builds the user documentation in docs/site into the bundle the community site serves at /docs.
 //   node scripts/docs-bundle.mjs check                      validate pages, the generated index and docs links in code
-//   node scripts/docs-bundle.mjs readme                     regenerate docs/site/README.md
+//   node scripts/docs-bundle.mjs readme                     regenerate docs/site/README.md and the help button's routes
 //   node scripts/docs-bundle.mjs build <stable|preview> [--out .local/docs-bundle] [--shots .local/docs-shots] [--strict]
 //   node scripts/docs-bundle.mjs upload <stable|preview> [--out .local/docs-bundle]   needs R2_ACCOUNT_ID and keys
 // Bundle format: docs/site/BUNDLE.md.
@@ -16,6 +16,7 @@ import { readProductRelease } from './product-release.mjs'
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const siteRoot = 'docs/site'
 const readmePath = `${siteRoot}/README.md`
+const routesPath = 'apps/web/src/app/shell/docs-routes.ts'
 export const DOCS_ORIGIN = 'https://nxt.nekro.ai'
 const DIST_ORIGIN = 'https://dl.nekro.ai/nxt/docs'
 const ASSET_ORIGIN = `${DIST_ORIGIN}/assets`
@@ -191,6 +192,16 @@ export async function readSite({ commit = 'main' } = {}) {
       shotOwners.set(name, file)
     }
   }
+
+  // The help button opens one page per interface route, so a route belongs to exactly one page.
+  const routeOwners = new Map()
+  for (const page of pages.values())
+    for (const route of page.fields.routes) {
+      if (!/^\/[a-z0-9-]+(?:\/[a-z0-9-]+)*$/u.test(route))
+        errors.push(`${page.file}：routes 里的 ${route} 不是界面路由`)
+      else if (routeOwners.has(route)) errors.push(`${page.file}：路由 ${route} 已经属于 ${routeOwners.get(route)}`)
+      else routeOwners.set(route, page.id)
+    }
 
   const assets = new Map()
   const addAsset = (file) => {
@@ -377,6 +388,22 @@ export function applyFlows(site, reportsDir, previous) {
   return { shots, stale, missing }
 }
 
+/** The help button's table: the deepest matching route wins, so longer routes come first. */
+export function renderRoutes(pages) {
+  const routes = [...pages.values()]
+    .flatMap((page) => page.fields.routes.map((route) => [route, page.id]))
+    .sort(([a], [b]) => b.split('/').length - a.split('/').length || a.localeCompare(b))
+  return [
+    '// 由 node scripts/docs-bundle.mjs readme 按使用文档页面头部的 routes 生成，不要手改。',
+    '',
+    '/** Interface routes and the documentation page the help button opens there; deeper routes first. */',
+    'export const DOCS_ROUTES: readonly (readonly [route: string, page: string])[] = [',
+    ...routes.map(([route, id]) => `  ['${route}', '${id}'],`),
+    ']',
+    '',
+  ].join('\n')
+}
+
 export function bundleOf({ sections, pages }, release, builtAt, { shots = {}, stale = new Map() } = {}) {
   return {
     schemaVersion: 1,
@@ -496,6 +523,9 @@ async function main() {
       const current = await readFile(path.join(repositoryRoot, readmePath), 'utf8').catch(() => '')
       if (current !== renderReadme(site.sections, site.pages))
         errors.push(`${readmePath} 已过期，运行 node scripts/docs-bundle.mjs readme`)
+      const routes = await readFile(path.join(repositoryRoot, routesPath), 'utf8').catch(() => '')
+      if (routes !== renderRoutes(site.pages))
+        errors.push(`${routesPath} 已过期，运行 node scripts/docs-bundle.mjs readme`)
     }
     if (errors.length > 0) {
       console.error(['使用文档检查失败：', ...errors.map((error) => `  - ${error}`)].join('\n'))
@@ -506,6 +536,7 @@ async function main() {
     const site = await readSite()
     if (site.errors.length > 0) throw new Error(site.errors.join('\n'))
     await writeFile(path.join(repositoryRoot, readmePath), renderReadme(site.sections, site.pages))
+    await writeFile(path.join(repositoryRoot, routesPath), renderRoutes(site.pages))
   } else if ((command === 'build' || command === 'upload') && (channel === 'stable' || channel === 'preview')) {
     if (command === 'upload') await upload(channel, out)
     else

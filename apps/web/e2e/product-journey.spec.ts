@@ -815,6 +815,7 @@ test("an intelligent-agent can add another channel while replacing that channel'
         commandNetwork: true,
         communityFeedbackAuto: false,
         voiceTranscription: false,
+        communityDocs: true,
         commandAccounts: [],
         extensionAutonomy: 'manual',
         extensionRequesters: 'everyone',

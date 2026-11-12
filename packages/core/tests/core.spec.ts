@@ -706,8 +706,8 @@ describe('CoreService', () => {
 
   it('accepts only the current strict capability object', () => {
     const current = { ...deniedCapabilities, subagents: true, webSearch: true }
-    // Revisions stored before `scheduledTasks`, `codeRun`, `commandNetwork` and `commandAccounts` existed read them as
-    // on, off, on and none.
+    // Revisions stored before `scheduledTasks`, `codeRun`, `commandNetwork`, `commandAccounts` and `communityDocs`
+    // existed read them as on, off, on, none and on.
     expect(parseStoredAgentCapabilityGrants(current)).toEqual({
       ...current,
       scheduledTasks: true,
@@ -716,6 +716,7 @@ describe('CoreService', () => {
       commandAccounts: [],
       communityFeedbackAuto: false,
       voiceTranscription: false,
+      communityDocs: true,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',
       extensionConfigRequesters: 'admins',
@@ -1543,6 +1544,7 @@ describe('CoreService', () => {
       commandAccounts: [],
       communityFeedbackAuto: false,
       voiceTranscription: false,
+      communityDocs: true,
       extensionAutonomy: 'manual',
       extensionRequesters: 'everyone',
       extensionConfigRequesters: 'admins',

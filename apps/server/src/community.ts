@@ -677,6 +677,30 @@ export class CommunityService {
     return { items: body.items.map((item) => this.#summary(item)), nextCursor: body.nextCursor }
   }
 
+  /**
+   * The user documentation the web shows at /docs, for the agent's docs tools. Public: no community login. `channel`
+   * picks the documentation that matches this NekroNXT's release.
+   */
+  async searchDocs(input: {
+    readonly query: string
+    readonly channel: 'stable' | 'preview'
+    readonly limit: number
+  }): Promise<unknown> {
+    const search = new URLSearchParams({ q: input.query, limit: String(input.limit), channel: input.channel })
+    return this.#api(`/api/v1/docs/search?${search.toString()}`)
+  }
+
+  async readDoc(input: {
+    readonly id: string
+    readonly anchor?: string | undefined
+    readonly channel: 'stable' | 'preview'
+  }): Promise<unknown> {
+    const search = new URLSearchParams({ channel: input.channel })
+    if (input.anchor !== undefined) search.set('anchor', input.anchor)
+    const path = input.id.split('/').map(encodeURIComponent).join('/')
+    return this.#api(`/api/v1/docs/pages/${path}?${search.toString()}`)
+  }
+
   async getExtension(extensionId: string): Promise<CommunityExtensionDetail> {
     const raw = await this.#api(`/api/v1/extensions/${encodeURIComponent(extensionId)}`)
     const record = asRecord(raw)

@@ -468,6 +468,8 @@ export const AgentCapabilityGrantsSchema = z
     communityFeedbackAuto: z.boolean().default(false),
     /** Voice messages are transcribed for the agent when they arrive (附加功能 F10). */
     voiceTranscription: z.boolean().default(false),
+    /** Looking up the public user documentation on the community site; on unless the user turns it off. */
+    communityDocs: z.boolean().default(true),
     /**
      * How far the agent may take extension work on its own: `manual` stops at a verified candidate; `confirm` lets it
      * save, enable and switch after an administrator confirms in chat; `autonomous` lets it do so itself while the
@@ -503,6 +505,7 @@ export const AgentCapabilityGrantsSchema = z
     commandNetwork: true,
     communityFeedbackAuto: false,
     voiceTranscription: false,
+    communityDocs: true,
     extensionAutonomy: 'manual',
     extensionRequesters: 'everyone',
     extensionConfigRequesters: 'admins',
@@ -511,17 +514,22 @@ export const AgentCapabilityGrantsSchema = z
 
 export type AgentCapabilityGrants = z.infer<typeof AgentCapabilityGrantsSchema>
 
-/** Default-off additions are absent from persisted capabilities so older readers keep accepting unchanged agents. */
+/**
+ * Additions are absent from persisted capabilities while they keep their default, so older readers keep accepting
+ * unchanged agents.
+ */
 export type StoredAgentCapabilityGrants = Omit<
   AgentCapabilityGrants,
   | 'communityFeedbackAuto'
   | 'voiceTranscription'
+  | 'communityDocs'
   | 'extensionAutonomy'
   | 'extensionRequesters'
   | 'extensionConfigRequesters'
 > & {
   readonly communityFeedbackAuto?: boolean
   readonly voiceTranscription?: boolean
+  readonly communityDocs?: boolean
   readonly extensionAutonomy?: AgentCapabilityGrants['extensionAutonomy']
   readonly extensionRequesters?: AgentCapabilityGrants['extensionRequesters']
   readonly extensionConfigRequesters?: AgentCapabilityGrants['extensionConfigRequesters']
@@ -530,6 +538,7 @@ export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants)
   const {
     communityFeedbackAuto,
     voiceTranscription,
+    communityDocs,
     extensionAutonomy,
     extensionRequesters,
     extensionConfigRequesters,
@@ -539,6 +548,7 @@ export const storedAgentCapabilityGrants = (capabilities: AgentCapabilityGrants)
     ...existing,
     ...(communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
     ...(voiceTranscription ? { voiceTranscription: true } : {}),
+    ...(communityDocs ? {} : { communityDocs: false }),
     ...(extensionAutonomy === 'manual' ? {} : { extensionAutonomy }),
     ...(extensionRequesters === 'everyone' ? {} : { extensionRequesters }),
     ...(extensionConfigRequesters === 'admins' ? {} : { extensionConfigRequesters }),
@@ -900,6 +910,7 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
     ...(content.capabilities.commandNetwork ? {} : { commandNetwork: false }),
     ...(content.capabilities.communityFeedbackAuto ? { communityFeedbackAuto: true } : {}),
     ...(content.capabilities.voiceTranscription ? { voiceTranscription: true } : {}),
+    ...(content.capabilities.communityDocs ? {} : { communityDocs: false }),
     ...(content.capabilities.extensionAutonomy === 'manual'
       ? {}
       : { extensionAutonomy: content.capabilities.extensionAutonomy }),

@@ -1,9 +1,11 @@
 import { Bot, CheckCircle2, ChevronRight, MessageCircle, Plug, TriangleAlert, Wrench, X } from 'lucide-react'
+import type { ProductUpdateStatus } from '@nekro-nxt/contracts'
 import { useMemo } from 'react'
 import { useProductRuntime } from '../../product-runtime.js'
 import { Button, IconButton, Pressable } from '../../ui-kit/index.js'
 import { attentionSource, useAttention, type AttentionItem } from '../model/attention.js'
 import { useGo } from '../model/nav.js'
+import { docsForBuild } from '../shell/docs-help.js'
 import { openBell } from './bell.js'
 import styles from './attention-list.module.css'
 
@@ -114,6 +116,7 @@ export function AttentionList({
   focus,
   onClearFocus,
   onAction,
+  docsChannel,
 }: {
   /** Popover density: the action stays, detail text wraps under the title. */
   readonly compact?: boolean
@@ -122,6 +125,8 @@ export function AttentionList({
   readonly onClearFocus?: () => void
   /** Called after an item's action navigates, e.g. to close the surrounding popover. */
   readonly onAction?: () => void
+  /** Which documentation the 「怎么处理」 links open: the one matching this build. */
+  readonly docsChannel?: ProductUpdateStatus['channel'] | undefined
 }) {
   const navigate = useGo()
   const runtime = useProductRuntime()
@@ -174,6 +179,11 @@ export function AttentionList({
           <div className={styles.text}>
             <div className={styles.what}>{item.title}</div>
             <div className={styles.why}>{item.detail}</div>
+            {item.help ? (
+              <a className={styles.help} href={docsForBuild(item.help, docsChannel)} target="_blank" rel="noreferrer">
+                怎么处理
+              </a>
+            ) : null}
           </div>
           <Button
             size="small"

@@ -661,6 +661,7 @@ export function registerWorkspaceRoutes({
           ...(parsed.codeRun === undefined ? {} : { codeRun: parsed.codeRun }),
           ...(parsed.commandNetwork === undefined ? {} : { commandNetwork: parsed.commandNetwork }),
           ...(parsed.voiceTranscription === undefined ? {} : { voiceTranscription: parsed.voiceTranscription }),
+          ...(parsed.communityDocs === undefined ? {} : { communityDocs: parsed.communityDocs }),
           ...(parsed.extensionAutonomy === undefined ? {} : { extensionAutonomy: parsed.extensionAutonomy }),
           ...(parsed.extensionRequesters === undefined ? {} : { extensionRequesters: parsed.extensionRequesters }),
           ...(parsed.extensionConfigRequesters === undefined

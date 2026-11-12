@@ -61,6 +61,14 @@
   font: var(--t-note);
 }
 
+.help {
+  justify-self: start;
+  color: var(--accent);
+  font: var(--t-note);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 /* Popover: narrower rows, the title and reason wrap instead of pushing the action out. */
 .compact .row {
   grid-template-columns: 28px minmax(0, 1fr) auto auto;

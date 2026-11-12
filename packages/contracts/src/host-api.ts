@@ -391,6 +391,8 @@ const AgentCapabilitiesSchema = z
     communityFeedbackAuto: z.boolean().default(false),
     /** Voice messages reach the agent with a transcript (附加功能 F10). */
     voiceTranscription: z.boolean().default(false),
+    /** Looking up the community site's user documentation; absent in older clients means on. */
+    communityDocs: z.boolean().default(true),
     /** Linked accounts this agent's commands act as, one per platform; absent in older clients means none. */
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).default([]),
     /**
@@ -734,6 +736,7 @@ const UpdateAgentCapabilitiesRequestSchema = AgentCapabilitiesSchema.partial()
     commandNetwork: z.boolean().optional(),
     communityFeedbackAuto: z.boolean().optional(),
     voiceTranscription: z.boolean().optional(),
+    communityDocs: z.boolean().optional(),
     commandAccounts: z.array(CommandAccountGrantSchema).max(8).optional(),
     extensionAutonomy: z.enum(['manual', 'confirm', 'autonomous']).optional(),
     extensionRequesters: z.enum(['everyone', 'admins']).optional(),
@@ -1708,6 +1711,8 @@ export const AttentionItemSchema = z
       .object({ key: z.string().min(1).max(200), label: z.string().min(1).max(120) })
       .strict()
       .optional(),
+    /** The troubleshooting section for this kind of problem, a stable-channel address at nxt.nekro.ai/docs. */
+    help: z.string().url().startsWith('https://nxt.nekro.ai/docs/').max(300).optional(),
     occurredAt: z.number().int().safe().nonnegative(),
   })
   .strict()
