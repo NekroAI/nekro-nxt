@@ -408,7 +408,7 @@ export function applyFlows(site, reportsDir, previous) {
       if (absent.length > 0) flagged(page, `界面上没有出现 ${absent.map((term) => `「${term}」`).join('、')}`)
     }
     for (const name of page.shots) {
-      const fresh = report?.status === 'passed' ? report.shots[name] : undefined
+      const fresh = report?.status === 'passed' && !stale.has(page.id) ? report.shots[name] : undefined
       const light = path.join(reportsDir, `${name}.light.webp`)
       const dark = path.join(reportsDir, `${name}.dark.webp`)
       if (fresh !== undefined && existsSync(light) && existsSync(dark)) {
