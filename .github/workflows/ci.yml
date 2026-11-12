@@ -53,12 +53,20 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium-headless-shell
       - run: pnpm test:coverage
 
+  # One job per group (playwright.browser.config.ts): the largest files alone, the rest together.
   browser:
+    name: browser (${{ matrix.group }})
     concurrency:
-      group: browser-${{ github.ref }}
+      group: browser-${{ matrix.group }}-${{ github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [app, settings, shell, rest]
+    env:
+      NEKRO_BROWSER_TEST_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -78,12 +86,20 @@ jobs:
       - run: pnpm build
       - run: pnpm test:browser
 
+  # Two jobs (playwright.config.ts): the two longest files, and every other file.
   journey:
+    name: journey (${{ matrix.group }})
     concurrency:
-      group: journey-${{ github.ref }}
+      group: journey-${{ matrix.group }}-${{ github.ref }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [longest, rest]
+    env:
+      NEKRO_JOURNEY_GROUP: ${{ matrix.group }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -105,7 +121,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results-${{ github.run_attempt }}
+          name: playwright-results-${{ matrix.group }}-${{ github.run_attempt }}
           path: .local/playwright-results
           if-no-files-found: warn
           retention-days: 7

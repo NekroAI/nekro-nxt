@@ -3,8 +3,16 @@ import { defineConfig, devices } from '@playwright/test'
 // Parallel worktrees each run the journey on their own port and data directory.
 const productPort = Number(process.env['NEKRO_E2E_PORT'] ?? 4970)
 
+// CI runs the journeys as two parallel jobs: the two longest files, one per worker, and every other file. Without a
+// group everything runs.
+const LONGEST = ['layout-audit', 'product-quality']
+const group = process.env['NEKRO_JOURNEY_GROUP']
+if (group !== undefined && group !== 'longest' && group !== 'rest') throw new Error(`未知的旅程测试分组：${group}`)
+
 export default defineConfig({
   testDir: './apps/web/e2e',
+  ...(group === 'longest' ? { testMatch: LONGEST.map((name) => `**/${name}.spec.ts`) } : {}),
+  ...(group === 'rest' ? { testIgnore: LONGEST.map((name) => `**/${name}.spec.ts`) } : {}),
   outputDir: './.local/playwright-results',
   fullyParallel: false,
   forbidOnly: Boolean(process.env['CI']),
