@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict'
+import childProcess from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import {
   assertPreviewCandidateAssets,
   assertPreviewReceipt,
   assertRemoteArtifactIntegrity,
   expectedPreviewAssets,
+  main as runRollingPreviewRelease,
   previewArtifactName,
   previewArtifactTargets,
   previewReleaseBody,
@@ -20,6 +26,94 @@ const release = {
   releaseId: '1.4.0-20250615-150640utc.g0123456789ab+0123456789ab',
   commit: '0123456789abcdef0123456789abcdef01234567',
 }
+
+async function runFinalize(t, { buildResult = 'success', mainCommit = release.commit, previousCommit = '' } = {}) {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), 'nekro-nxt-preview-finalize-'))
+  const outputFile = path.join(temporaryRoot, 'github-output')
+  const previousArgv = process.argv
+  const previousEnvironment = new Map(['GITHUB_OUTPUT', 'GITHUB_REPOSITORY'].map((name) => [name, process.env[name]]))
+  const ghCalls = []
+  t.mock.method(childProcess, 'execFileSync', (command, args) => {
+    assert.equal(command, 'git')
+    if (args.join(' ') === 'rev-parse HEAD') return release.commit
+    assert.deepEqual(args, ['show', '-s', '--format=%ct', 'HEAD'])
+    return '1750000000'
+  })
+  t.mock.method(childProcess, 'spawnSync', (command, args) => {
+    assert.equal(command, 'gh')
+    ghCalls.push(args)
+    let response
+    if (args[1] === '/repos/ExampleOrg/example/git/ref/heads/main') {
+      response = { object: { sha: mainCommit } }
+    } else {
+      assert.deepEqual(args, ['api', '/repos/ExampleOrg/example/releases/tags/preview'])
+      assert.ok(previousCommit, 'unexpected release access or publication')
+      response = { draft: false, body: `<!-- nxt-preview-commit:${previousCommit} -->` }
+    }
+    return { status: 0, stdout: JSON.stringify(response), stderr: '' }
+  })
+  syncBuiltinESMExports()
+  process.argv = [
+    'node',
+    'rolling-preview-release.mjs',
+    'finalize',
+    '--build-result',
+    buildResult,
+    '--candidates-dir',
+    temporaryRoot,
+  ]
+  process.env['GITHUB_OUTPUT'] = outputFile
+  process.env['GITHUB_REPOSITORY'] = 'ExampleOrg/example'
+  try {
+    const published = await runRollingPreviewRelease()
+    return { published, output: await readFile(outputFile, 'utf8'), ghCalls }
+  } finally {
+    process.argv = previousArgv
+    for (const [name, value] of previousEnvironment) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+    assert.equal(path.dirname(temporaryRoot), path.resolve(os.tmpdir()))
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+}
+
+test('unsuccessful Preview candidates report unpublished to later CI steps', async (t) => {
+  assert.deepEqual(await runFinalize(t, { buildResult: 'failure' }), {
+    published: false,
+    output: 'published=false\n',
+    ghCalls: [],
+  })
+})
+
+test('stale Preview candidates cannot enable documentation publication', async (t) => {
+  const result = await runFinalize(t, { mainCommit: 'f'.repeat(40), previousCommit: release.commit })
+  assert.equal(result.published, false)
+  assert.equal(result.output, 'published=false\n')
+  assert.deepEqual(result.ghCalls, [['api', '/repos/ExampleOrg/example/git/ref/heads/main']])
+})
+
+test('a successful same-commit Preview rerun can retry documentation without replacing installers', async (t) => {
+  const result = await runFinalize(t, { previousCommit: release.commit })
+  assert.equal(result.published, true)
+  assert.equal(result.output, 'published=true\n')
+  assert.deepEqual(result.ghCalls, [
+    ['api', '/repos/ExampleOrg/example/git/ref/heads/main'],
+    ['api', '/repos/ExampleOrg/example/releases/tags/preview'],
+  ])
+})
+
+test('Preview CI gates documentation on the finalization publication output', async () => {
+  const workflow = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
+  const finalize = workflow.split('      - name: Verify and publish all platforms\n')[1]?.split('      - ')[0]
+  assert.match(finalize, /^ {8}id: finalize\n/mu)
+  for (const name of ['Download documentation screenshots', 'Publish Preview documentation']) {
+    const step = workflow.split(`      - name: ${name}\n`)[1]?.split('      - ')[0]
+    assert.match(step, /if: \$\{\{ steps\.finalize\.outputs\.published == 'true' && vars\.R2_ACCOUNT_ID != '' \}\}/u)
+  }
+})
 
 test('rolling Preview exposes only the four platform installers', () => {
   assert.equal(

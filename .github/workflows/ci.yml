@@ -498,6 +498,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify and publish all platforms
+        id: finalize
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/rolling-preview-release.mjs finalize --candidates-dir .local/preview-candidates --build-result success
@@ -522,7 +523,7 @@ jobs:
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/android-release.mjs mirror preview --artifacts-dir .local/preview-candidates
       - name: Download documentation screenshots
-        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        if: ${{ steps.finalize.outputs.published == 'true' && vars.R2_ACCOUNT_ID != '' }}
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
@@ -531,7 +532,7 @@ jobs:
       # Documentation for nxt.nekro.ai/docs/preview, built from the same commit as the installers (docs/site/BUNDLE.md).
       - name: Publish Preview documentation
         id: docs
-        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        if: ${{ steps.finalize.outputs.published == 'true' && vars.R2_ACCOUNT_ID != '' }}
         continue-on-error: true
         env:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
