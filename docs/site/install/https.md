@@ -1,7 +1,7 @@
 ---
 summary: 让其他设备或公网通过 HTTPS 访问实例：反向代理与信任代理设置。
 ui: [设置 → 登录与访问]
-routes: [/settings/access]
+routes: []
 keywords: [HTTPS, 反向代理, nginx, Caddy, 公网, 证书, NEKRO_TRUST_PROXY]
 ---
 

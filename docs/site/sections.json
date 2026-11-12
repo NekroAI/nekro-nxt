@@ -24,14 +24,21 @@
       "id": "models",
       "title": "模型",
       "pages": [
-        "providers"
+        "providers",
+        "choosing"
       ]
     },
     {
       "id": "agents",
       "title": "智能体",
       "pages": [
-        "create"
+        "create",
+        "persona",
+        "abilities",
+        "memory",
+        "context",
+        "sub-conversations",
+        "scheduled-tasks"
       ]
     },
     {
@@ -39,6 +46,8 @@
       "title": "频道与平台",
       "pages": [
         "wiring",
+        "response",
+        "admins-commands",
         "qq-official",
         "onebot-11",
         "wecom",
@@ -58,6 +67,9 @@
       "pages": [
         "upgrade-backup",
         "access",
+        "credentials",
+        "notifications",
+        "storage",
         "logs"
       ]
     },

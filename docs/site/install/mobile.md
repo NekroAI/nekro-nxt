@@ -1,7 +1,7 @@
 ---
 summary: 在安卓应用或手机主屏幕上使用 NekroNXT，并接收后台通知。
-ui: [设置 → 通知]
-routes: [/settings/notifications]
+ui: [设置 → 登录与访问, 设置 → 通知]
+routes: []
 keywords: [手机, 安卓, iPhone, 主屏幕, 推送, 通知]
 ---
 

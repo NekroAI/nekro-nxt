@@ -1,7 +1,7 @@
 ---
 summary: 在 macOS、Windows、Linux 上安装桌面版，选择稳定版或预览版。
 ui: [设置 → 关于]
-routes: [/settings/about]
+routes: []
 keywords: [桌面版, 安装包, 被拦截, 更新, 预览版]
 ---
 

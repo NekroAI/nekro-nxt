@@ -1,7 +1,7 @@
 ---
 summary: 以 QQ 官方机器人为例，从添加平台账号到智能体在群里回复。
 ui: [接线 → 添加平台账号]
-routes: [/wiring]
+routes: []
 keywords: [拉群, 进群, 接入群聊, 群里用, QQ 群, 绑定群, 接线, 群里没反应]
 flow: first-group
 ---

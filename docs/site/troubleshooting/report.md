@@ -1,7 +1,7 @@
 ---
 summary: 在社区或 GitHub 反馈问题，以及让智能体帮你起草。
 ui: [社区 → 反馈, 设置 → 社区反馈]
-routes: [/community, /settings/feedback]
+routes: [/settings/feedback]
 keywords: [反馈, 报告问题, Issue, Bug]
 ---
 
