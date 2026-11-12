@@ -544,12 +544,15 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
     await client?.stop()
   }
 
-  /** A file is its own platform upload, not a message segment; everything else stays one message, in order. */
+  /**
+   * A file is its own platform upload, not a message segment, and QQ shows a voice message alone, dropping any text
+   * or quote sent with it; everything else stays one message, in order.
+   */
   planOutbound(input: { readonly parts: readonly MessagePart[] }): Promise<readonly AdapterPhysicalPlan[]> {
     const plans: MessagePart[][] = []
     let current: MessagePart[] = []
     for (const part of input.parts) {
-      if (part.type !== 'file') {
+      if (part.type !== 'file' && part.type !== 'audio') {
         current.push(part)
         continue
       }
@@ -672,7 +675,7 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
 
   async #outboundSegments(request: PhysicalDeliveryRequest): Promise<OneBotObject[]> {
     const output: OneBotObject[] = []
-    if (request.replyTo !== undefined) {
+    if (request.replyTo !== undefined && !request.parts.some((part) => part.type === 'audio')) {
       const platformMessageId = await this.#context.messages.resolvePlatformMessageId(
         request.channelId,
         LogicalMessageIdSchema.parse(request.replyTo),

@@ -523,7 +523,6 @@ describe('OneBot 11 normalized inbound', () => {
             { type: 'text', text: '收到' },
             { type: 'mention', memberId },
             { type: 'image', assetId: AssetIdSchema.parse('ast_IMAGE1') },
-            { type: 'audio', assetId: AssetIdSchema.parse('ast_AUDIO1') },
           ],
         },
         new AbortController().signal,
@@ -538,9 +537,31 @@ describe('OneBot 11 normalized inbound', () => {
           { type: 'text', data: { text: '收到' } },
           { type: 'at', data: { qq: 'fixture-member-outbound' } },
           { type: 'image', data: { file: 'base64://AQID' } },
-          { type: 'record', data: { file: 'base64://AQID' } },
         ],
       },
+    })
+
+    const voice = { type: 'audio' as const, assetId: AssetIdSchema.parse('ast_AUDIO1') }
+    expect(await runtime.planOutbound({ parts: [{ type: 'text', text: '听这个' }, voice] })).toEqual([
+      { parts: [{ type: 'text', text: '听这个' }] },
+      { parts: [voice] },
+    ])
+    protocol.requests.length = 0
+    await expect(
+      runtime.deliver(
+        {
+          deliveryId: PhysicalDeliveryIdSchema.parse('phy_TEST2'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_TEST1'),
+          connectionId: fake.context.connectionId,
+          channelId,
+          replyTo: LogicalMessageIdSchema.parse('msg_QUOTE1'),
+          parts: [voice],
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ status: 'sent' })
+    expect(protocol.requests.find(({ action }) => action === 'send_group_msg')?.['params']).toMatchObject({
+      message: [{ type: 'record', data: { file: 'base64://AQID' } }],
     })
     await runtime.stop()
   })
