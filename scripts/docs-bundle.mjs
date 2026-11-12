@@ -136,7 +136,8 @@ export async function readSite({ commit = 'main' } = {}) {
         if (!heading) continue
         const text = plainHeading(heading[2])
         const anchor = headingAnchor(text, counts)
-        anchors.add(anchor)
+        // Only ## and ### get anchors on the site, so only they can be linked to.
+        if (heading[1].length === 2 || heading[1].length === 3) anchors.add(anchor)
         if (heading[1].length === 1) errors.push(`${file}：正文里不能再有 # 一级标题「${text}」`)
         if (heading[1].length === 2 || heading[1].length === 3)
           headings.push({ depth: heading[1].length, text, anchor })

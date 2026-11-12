@@ -11,7 +11,7 @@ keywords: [拦截, 无法连接, 正在连接, 启动失败]
 
 ## 安装包被系统拦截
 
-当前 Preview 尚未使用平台开发者证书签名。确认下载来自 `NekroAI/nekro-nxt` Release；GitHub 资产列表会显示安装包的 SHA-256。macOS 的完整放行步骤和截图见[桌面版安装：首次打开被系统拦截](../install/desktop.md#首次打开被系统拦截)。不要为第三方来源的安装包跳过系统检查。
+当前 Preview 尚未使用平台开发者证书签名。确认下载来自 `NekroAI/nekro-nxt` Release；GitHub 资产列表会显示安装包的 SHA-256。macOS 的完整放行步骤和截图见[桌面版安装：首次打开被系统拦截](../install/desktop.md#macos)。不要为第三方来源的安装包跳过系统检查。
 
 ## 桌面版一直显示正在连接或无法连接
 
