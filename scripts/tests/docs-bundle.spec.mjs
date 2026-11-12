@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { bundleOf, headingAnchor, parseFrontMatter, readSite } from '../docs-bundle.mjs'
+import { applyFlows, bundleOf, headingAnchor, parseFrontMatter, readSite } from '../docs-bundle.mjs'
 
 test('page front matter accepts only the documented keys and list syntax', () => {
   const { fields, body } = parseFrontMatter(
@@ -40,4 +40,49 @@ test('the repository documentation builds into a bundle with resolved links', as
       assert.ok(ids.has(link[1].slice(6)), `${page.id} → ${link[1]}`)
     assert.doesNotMatch(page.markdown, /\]\((?:\.\.\/|\.\/)?[^):#]+\.md/u, `${page.id} 仍有相对 .md 链接`)
   }
+})
+
+test('flow reports turn into shots and stale pages, falling back to the previous bundle', async () => {
+  const { mkdtemp, writeFile } = await import('node:fs/promises')
+  const { tmpdir } = await import('node:os')
+  const path = await import('node:path')
+  const dir = await mkdtemp(path.join(tmpdir(), 'docs-flows-'))
+  const page = (id, flow, shots, terms) => ({
+    id,
+    file: `docs/site/${id}.md`,
+    fields: { flow },
+    shots: new Set(shots),
+    terms,
+  })
+  const site = {
+    assets: new Map(),
+    pages: new Map([
+      ['a/fresh', page('a/fresh', 'ok', ['ok-shot'], ['设置', '模型'])],
+      ['a/renamed', page('a/renamed', 'ok', [], ['旧按钮'])],
+      ['a/broken', page('a/broken', 'broken', ['old-shot', 'never-shot'], [])],
+      ['a/plain', page('a/plain', undefined, [], ['随便'])],
+    ]),
+  }
+  await writeFile(
+    path.join(dir, 'ok.json'),
+    JSON.stringify({ status: 'passed', shots: { 'ok-shot': { width: 800, height: 600 } }, texts: ['设置', '模型 ID'] }),
+  )
+  await writeFile(
+    path.join(dir, 'broken.json'),
+    JSON.stringify({ status: 'failed', error: '找不到按钮', shots: {}, texts: [] }),
+  )
+  await writeFile(path.join(dir, 'ok-shot.light.webp'), 'light')
+  await writeFile(path.join(dir, 'ok-shot.dark.webp'), 'dark')
+  const previous = { 'old-shot': { light: 'https://x/l.webp', dark: 'https://x/d.webp', width: 1, height: 1 } }
+
+  const { shots, stale, missing } = applyFlows(site, dir, previous)
+  assert.equal(shots['ok-shot'].width, 800)
+  assert.match(shots['ok-shot'].light, /^https:\/\/dl\.nekro\.ai\/nxt\/docs\/assets\/[0-9a-f]{16}\.webp$/u)
+  assert.notEqual(shots['ok-shot'].light, shots['ok-shot'].dark)
+  assert.equal(site.assets.size, 2)
+  assert.deepEqual(shots['old-shot'], previous['old-shot'])
+  assert.deepEqual([...stale.keys()], ['a/renamed', 'a/broken'])
+  assert.match(stale.get('a/renamed')[0], /「旧按钮」/u)
+  assert.match(stale.get('a/broken')[0], /找不到按钮/u)
+  assert.deepEqual(missing, ['docs/site/a/broken.md：截图 never-shot 没有生成，上一版也没有'])
 })

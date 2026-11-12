@@ -168,8 +168,38 @@ jobs:
     uses: ./.github/workflows/android-release.yml
     secrets: inherit
 
+  # The stable documentation is built before anything ships: a failed flow or a stale page stops the release.
+  docs:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: sudo apt-get install -y --no-install-recommends fonts-noto-cjk
+      - run: pnpm build
+      - run: pnpm docs:shots
+      - run: node scripts/docs-bundle.mjs build stable --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stable-docs-${{ needs.verify.outputs.commit }}
+          path: .local/docs-bundle
+          if-no-files-found: error
+
   publish:
-    needs: [verify, desktop, server]
+    needs: [verify, desktop, server, docs]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -216,6 +246,11 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/mirror-desktop-release.mjs stable --artifacts-dir .local/stable-release
+      - name: Download the stable documentation
+        uses: actions/download-artifact@v4
+        with:
+          name: stable-docs-${{ needs.verify.outputs.commit }}
+          path: .local/docs-bundle
       # Documentation for nxt.nekro.ai/docs, built from the same commit as the installers (docs/site/BUNDLE.md).
       - name: Publish Stable documentation
         if: ${{ vars.R2_ACCOUNT_ID != '' }}
@@ -224,7 +259,7 @@ jobs:
           R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-        run: node scripts/docs-bundle.mjs build stable && node scripts/docs-bundle.mjs upload stable
+        run: node scripts/docs-bundle.mjs upload stable
       # Only after the Release is out, so extension authors never get an SDK the stable NekroNXT does not know yet
       # (docs/09 §6). Needs each package's trusted publisher on npm with 「Allow npm dist-tag」, and npm ≥ 12.2.
       - name: Point the shared packages' latest at this release

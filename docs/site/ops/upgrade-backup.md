@@ -88,4 +88,4 @@ Desktop 只在本地 Host 的 `/health/ready` 返回同包 Release 后开放产�
 
 升级机制与贡献者验收要求见 [DSH 升级维护指南](../../dsh-upgrade.md)。恢复功能已经有对应实现和合成测试入口；是否可交付仍需对候选容器、Desktop 各平台产物和真实界面完成验收，本文不代表这些验收已经通过。
 
-![水月荧展示升级或备份完成的档案舱](../../../assets/brand/raster/upgrade-complete.png)
+![水月荧展示升级或备份完成的档案舱](media:upgrade-complete)

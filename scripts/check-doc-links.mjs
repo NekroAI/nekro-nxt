@@ -108,7 +108,8 @@ for (const source of documentPaths) {
 
   for (const match of content.matchAll(/\[[^\]]*\]\(([^)]+)\)/gu)) {
     const raw = match[1].trim().replace(/^<|>$/g, '')
-    if (/^(?:https?:|mailto:|data:)/u.test(raw)) continue
+    // shot: and media: are user-documentation images; scripts/docs-bundle.mjs checks them.
+    if (/^(?:https?:|mailto:|data:|shot:|media:)/u.test(raw)) continue
     const [targetPart, fragment] = raw.split('#', 2)
     const decodedTarget = decodeTarget(targetPart ?? '')
     const target = decodedTarget ? path.resolve(path.dirname(file), decodedTarget) : file

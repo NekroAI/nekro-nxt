@@ -1,7 +1,7 @@
 // Builds the user documentation in docs/site into the bundle the community site serves at /docs.
 //   node scripts/docs-bundle.mjs check                      validate pages, the generated index and docs links in code
 //   node scripts/docs-bundle.mjs readme                     regenerate docs/site/README.md
-//   node scripts/docs-bundle.mjs build <stable|preview> [--out .local/docs-bundle]
+//   node scripts/docs-bundle.mjs build <stable|preview> [--out .local/docs-bundle] [--shots .local/docs-shots] [--strict]
 //   node scripts/docs-bundle.mjs upload <stable|preview> [--out .local/docs-bundle]   needs R2_ACCOUNT_ID and keys
 // Bundle format: docs/site/BUNDLE.md.
 import { execFileSync } from 'node:child_process'
@@ -17,11 +17,14 @@ const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url))
 const siteRoot = 'docs/site'
 const readmePath = `${siteRoot}/README.md`
 export const DOCS_ORIGIN = 'https://nxt.nekro.ai'
-const ASSET_ORIGIN = 'https://dl.nekro.ai/nxt/docs/assets'
+const DIST_ORIGIN = 'https://dl.nekro.ai/nxt/docs'
+const ASSET_ORIGIN = `${DIST_ORIGIN}/assets`
 const REPOSITORY_URL = 'https://github.com/NekroAI/nekro-nxt'
 const FRONT_MATTER_KEYS = new Set(['summary', 'ui', 'routes', 'keywords', 'since', 'flow'])
 const LIST_KEYS = new Set(['ui', 'routes', 'keywords'])
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
+const SITE_DIRECTORIES = new Set(['images', 'media', 'flows'])
+const MEDIA_EXTENSIONS = ['.webp', '.png', '.jpg']
 const IMAGE_TYPES = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -88,6 +91,22 @@ const plainHeading = (text) =>
     .replace(/\*\*([^*]*)\*\*/gu, '$1')
     .trim()
 
+/** Shot names a flow declares with `docs.shot('name', …)`; a page may only show shots of its own flow. */
+async function readFlowShots(flow) {
+  const file = path.join(repositoryRoot, siteRoot, 'flows', `${flow}.flow.ts`)
+  if (!existsSync(file)) return null
+  return new Set([...(await readFile(file, 'utf8')).matchAll(/\.shot\(\s*'([a-z0-9-]+)'/gu)].map((match) => match[1]))
+}
+
+/** Interface words a page quotes in 「」, split at → so 「设置 → 模型」 means both 设置 and 模型. */
+const quotedTerms = (lines) => {
+  const terms = new Set()
+  for (const [, line] of proseLines(lines))
+    for (const match of line.replace(/`[^`]*`/gu, '').matchAll(/「([^」]+)」/gu))
+      for (const term of match[1].split('→')) if (term.trim() !== '') terms.add(term.trim())
+  return [...terms]
+}
+
 async function readSections() {
   const raw = JSON.parse(await readFile(path.join(repositoryRoot, siteRoot, 'sections.json'), 'utf8'))
   return raw.sections.map((section) => {
@@ -101,7 +120,7 @@ async function readSections() {
 async function listPageFiles() {
   const pages = []
   for (const entry of await readdir(path.join(repositoryRoot, siteRoot), { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name === 'images') continue
+    if (!entry.isDirectory() || SITE_DIRECTORIES.has(entry.name)) continue
     for (const file of await readdir(path.join(repositoryRoot, siteRoot, entry.name))) {
       if (file.endsWith('.md')) pages.push(`${entry.name}/${file.slice(0, -3)}`)
     }
@@ -142,14 +161,63 @@ export async function readSite({ commit = 'main' } = {}) {
         if (heading[1].length === 2 || heading[1].length === 3)
           headings.push({ depth: heading[1].length, text, anchor })
       }
-      pages.set(id, { id, file, section: id.split('/')[0], title, fields, markdownLines, headings, anchors })
+      const flowShots = fields.flow === undefined ? undefined : await readFlowShots(fields.flow)
+      if (flowShots === null) errors.push(`${file}：flow 指向的 ${siteRoot}/flows/${fields.flow}.flow.ts 不存在`)
+      pages.set(id, {
+        id,
+        file,
+        section: id.split('/')[0],
+        title,
+        fields,
+        markdownLines,
+        headings,
+        anchors,
+        flowShots: flowShots ?? new Set(),
+        shots: new Set(),
+        terms: quotedTerms(markdownLines),
+      })
     } catch (error) {
       errors.push(error instanceof Error ? error.message : String(error))
     }
   }
 
+  // Shots from every flow land in one directory, so their names must not collide.
+  const flowsDir = path.join(repositoryRoot, siteRoot, 'flows')
+  const shotOwners = new Map()
+  for (const file of existsSync(flowsDir) ? await readdir(flowsDir) : []) {
+    if (!file.endsWith('.flow.ts')) continue
+    for (const name of (await readFlowShots(file.slice(0, -8))) ?? []) {
+      if (shotOwners.has(name)) errors.push(`截图名 ${name} 同时出现在 ${shotOwners.get(name)} 和 ${file}`)
+      shotOwners.set(name, file)
+    }
+  }
+
   const assets = new Map()
+  const addAsset = (file) => {
+    const extension = path.extname(file).toLowerCase()
+    const name = `${createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16)}${extension}`
+    assets.set(name, file)
+    return `${ASSET_ORIGIN}/${name}`
+  }
   const resolveLink = (page, href, isImage) => {
+    if (isImage && href.startsWith('shot:')) {
+      const name = href.slice(5)
+      if (page.fields.flow === undefined) errors.push(`${page.file}：用了截图 ${href}，但页面头部没有 flow`)
+      else if (!page.flowShots.has(name)) errors.push(`${page.file}：流程 ${page.fields.flow} 里没有截图 ${name}`)
+      page.shots.add(name)
+      return href
+    }
+    if (isImage && href.startsWith('media:')) {
+      const name = href.slice(6)
+      const file = MEDIA_EXTENSIONS.map((extension) =>
+        path.join(repositoryRoot, siteRoot, 'media', `${name}${extension}`),
+      ).find((candidate) => existsSync(candidate))
+      if (file === undefined) {
+        errors.push(`${page.file}：${siteRoot}/media/ 里没有效果图 ${name}`)
+        return href
+      }
+      return addAsset(file)
+    }
     if (/^[a-z][a-z0-9+.-]*:/iu.test(href) || href.startsWith('#')) return href
     const [target, hash] = href.split('#')
     const repoPath = path.posix.normalize(path.posix.join(path.posix.dirname(page.file), decodeURIComponent(target)))
@@ -163,12 +231,7 @@ export async function readSite({ commit = 'main' } = {}) {
         errors.push(`${page.file}：不支持的图片格式 ${href}`)
         return href
       }
-      const name = `${createHash('sha256')
-        .update(readFileSync(path.join(repositoryRoot, repoPath)))
-        .digest('hex')
-        .slice(0, 16)}${extension}`
-      assets.set(name, repoPath)
-      return `${ASSET_ORIGIN}/${name}`
+      return addAsset(path.join(repositoryRoot, repoPath))
     }
     if (repoPath.startsWith(`${siteRoot}/`) && repoPath.endsWith('.md') && repoPath !== readmePath) {
       const linked = pages.get(repoPath.slice(siteRoot.length + 1, -3))
@@ -254,7 +317,67 @@ export function renderReadme(sections, pages) {
   return `${lines.join('\n')}\n`
 }
 
-export function bundleOf({ sections, pages }, release, builtAt) {
+/** The previous bundle's shots, kept for pages whose flow failed this time. */
+async function previousShots(channel) {
+  try {
+    const manifest = /** @type {{ bundle: string }} */ (
+      await (await globalThis.fetch(`${DIST_ORIGIN}/${channel}/manifest.json`)).json()
+    )
+    const bundle = /** @type {{ shots?: Record<string, unknown> }} */ (
+      await (await globalThis.fetch(`${DIST_ORIGIN}/${channel}/${manifest.bundle}`)).json()
+    )
+    return bundle.shots ?? {}
+  } catch (error) {
+    console.warn(
+      `读取上一版文档包失败，流程失败的截图不会保留：${error instanceof Error ? error.message : String(error)}`,
+    )
+    return {}
+  }
+}
+
+/**
+ * Turns the reports `pnpm docs:shots` wrote into shots and stale pages. A page is stale when its flow failed or the
+ * interface no longer shows a word the page quotes in 「」; its shots then fall back to the previous bundle's.
+ */
+export function applyFlows(site, reportsDir, previous) {
+  const reports = new Map()
+  const stale = new Map()
+  const shots = {}
+  const missing = []
+  const flagged = (page, reason) => stale.set(page.id, [...(stale.get(page.id) ?? []), reason])
+  for (const page of site.pages.values()) {
+    const flow = page.fields.flow
+    if (flow === undefined) continue
+    if (!reports.has(flow)) {
+      const file = path.join(reportsDir, `${flow}.json`)
+      reports.set(flow, existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null)
+    }
+    const report = reports.get(flow)
+    if (report === null) flagged(page, `流程 ${flow} 没有运行`)
+    else if (report.status !== 'passed') flagged(page, `流程 ${flow} 失败：${report.error ?? report.status}`)
+    else {
+      const absent = page.terms.filter((term) => !report.texts.some((text) => text.includes(term)))
+      if (absent.length > 0) flagged(page, `界面上没有出现 ${absent.map((term) => `「${term}」`).join('、')}`)
+    }
+    for (const name of page.shots) {
+      const fresh = report?.status === 'passed' ? report.shots[name] : undefined
+      const light = path.join(reportsDir, `${name}.light.webp`)
+      const dark = path.join(reportsDir, `${name}.dark.webp`)
+      if (fresh !== undefined && existsSync(light) && existsSync(dark)) {
+        const url = (file) => {
+          const asset = `${createHash('sha256').update(readFileSync(file)).digest('hex').slice(0, 16)}.webp`
+          site.assets.set(asset, file)
+          return `${ASSET_ORIGIN}/${asset}`
+        }
+        shots[name] = { light: url(light), dark: url(dark), width: fresh.width, height: fresh.height }
+      } else if (previous[name] !== undefined) shots[name] = previous[name]
+      else missing.push(`${page.file}：截图 ${name} 没有生成，上一版也没有`)
+    }
+  }
+  return { shots, stale, missing }
+}
+
+export function bundleOf({ sections, pages }, release, builtAt, { shots = {}, stale = new Map() } = {}) {
   return {
     schemaVersion: 1,
     channel: release.channel,
@@ -268,6 +391,7 @@ export function bundleOf({ sections, pages }, release, builtAt) {
         pages: section.pages.map((slug) => `${section.id}/${slug}`),
       }))
       .filter((section) => section.pages.length > 0),
+    shots,
     pages: [...pages.values()].map((page) => ({
       id: page.id,
       section: page.section,
@@ -277,7 +401,7 @@ export function bundleOf({ sections, pages }, release, builtAt) {
       ui: page.fields.ui,
       routes: page.fields.routes,
       keywords: page.fields.keywords,
-      stale: false,
+      stale: stale.has(page.id),
       markdown: page.markdown,
       headings: page.headings,
     })),
@@ -289,18 +413,25 @@ const option = (name, fallback) => {
   return index >= 0 ? process.argv[index + 1] : fallback
 }
 
-async function build(channel, out) {
+/** Stable releases pass --strict: any stale page or missing shot fails the build instead of shipping a warning. */
+async function build(channel, out, { shotsDir, strict }) {
   const release = await readProductRelease(repositoryRoot, channel)
   const site = await readSite({ commit: release.commit })
   if (site.errors.length > 0) throw new Error(site.errors.join('\n'))
-  const bundle = JSON.stringify(bundleOf(site, release, new Date().toISOString()))
+  const flows = applyFlows(site, shotsDir, await previousShots(channel))
+  const problems = [...[...flows.stale].map(([id, reasons]) => `${id} 待更新：${reasons.join('；')}`), ...flows.missing]
+  if (problems.length > 0) {
+    const message = ['文档流程有问题：', ...problems.map((problem) => `  - ${problem}`)].join('\n')
+    if (strict) throw new Error(message)
+    console.warn(message)
+  }
+  const bundle = JSON.stringify(bundleOf(site, release, new Date().toISOString(), flows))
   const digest = createHash('sha256').update(bundle).digest('hex')
   await rm(out, { recursive: true, force: true })
   await mkdir(path.join(out, 'bundles'), { recursive: true })
   await mkdir(path.join(out, 'assets'), { recursive: true })
   await writeFile(path.join(out, 'bundles', `${digest}.json`), bundle)
-  for (const [name, source] of site.assets)
-    await writeFile(path.join(out, 'assets', name), await readFile(path.join(repositoryRoot, source)))
+  for (const [name, source] of site.assets) await writeFile(path.join(out, 'assets', name), await readFile(source))
   const manifest = {
     schemaVersion: 1,
     channel,
@@ -311,7 +442,7 @@ async function build(channel, out) {
   }
   await writeFile(path.join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   console.log(
-    `文档包 ${release.version}：${site.pages.size} 页、${site.assets.size} 张图片 → ${path.relative(repositoryRoot, out)}`,
+    `文档包 ${release.version}：${site.pages.size} 页、${site.assets.size} 张图片、${flows.stale.size} 页待更新 → ${path.relative(repositoryRoot, out)}`,
   )
 }
 
@@ -376,10 +507,15 @@ async function main() {
     if (site.errors.length > 0) throw new Error(site.errors.join('\n'))
     await writeFile(path.join(repositoryRoot, readmePath), renderReadme(site.sections, site.pages))
   } else if ((command === 'build' || command === 'upload') && (channel === 'stable' || channel === 'preview')) {
-    await (command === 'build' ? build(channel, out) : upload(channel, out))
+    if (command === 'upload') await upload(channel, out)
+    else
+      await build(channel, out, {
+        shotsDir: path.resolve(repositoryRoot, option('--shots', '.local/docs-shots')),
+        strict: process.argv.includes('--strict'),
+      })
   } else {
     throw new Error(
-      '用法：docs-bundle.mjs check | readme | build <stable|preview> | upload <stable|preview> [--out 目录]',
+      '用法：docs-bundle.mjs check | readme | build <stable|preview> [--shots 目录] [--strict] | upload <stable|preview> [--out 目录]',
     )
   }
 }
