@@ -102,10 +102,13 @@ describe('management edge behind a reverse proxy and in development', () => {
   const roots: string[] = []
   const servers: Server[] = []
   const edges: ManagementEdgeHandle[] = []
+  const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
   afterEach(async () => {
     await Promise.all(edges.splice(0).map((edge) => edge.stop()))
-    for (const server of servers.splice(0)) server.closeAllConnections()
-    await Promise.all(servers.map((server) => new Promise((resolve) => server.close(resolve))))
+    const closingServers = servers.splice(0)
+    for (const server of closingServers) server.closeAllConnections()
+    await Promise.all(closingServers.map((server) => new Promise((resolve) => server.close(resolve))))
+    for (const database of databases.splice(0)) database.close()
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
@@ -118,7 +121,9 @@ describe('management edge behind a reverse proxy and in development', () => {
   ) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-proxy-'))
     roots.push(root)
-    const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    databases.push(database)
+    const repository = new SqliteHostSecurityRepository(database)
     const answer = (name: string) => (req: IncomingMessage, res: ServerResponse) => {
       res.writeHead(200, { 'content-type': 'text/plain' })
       res.end(`${name} ${req.url ?? ''} host=${req.headers.host ?? ''}`)

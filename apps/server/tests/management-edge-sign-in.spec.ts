@@ -75,16 +75,20 @@ describe('signing in with codes, passkeys and the key switch', () => {
   const roots: string[] = []
   const servers: Server[] = []
   const edges: ManagementEdgeHandle[] = []
+  const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
   afterEach(async () => {
     await Promise.all(edges.splice(0).map((edge) => edge.stop()))
     await Promise.all(servers.splice(0).map((server) => new Promise((resolve) => server.close(resolve))))
+    for (const database of databases.splice(0)) database.close()
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
   const start = async (publicOrigin?: string) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-sign-in-'))
     roots.push(root)
-    const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    databases.push(database)
+    const repository = new SqliteHostSecurityRepository(database)
     const internal = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end('{}')
