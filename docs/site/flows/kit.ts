@@ -104,6 +104,9 @@ export const test = base.extend<{
       see,
       async shot(name, target, options) {
         if (name in shots) throw new Error(`截图 ${name} 拍了两次`)
+        // The page's words are read once what the shot shows is on screen, not while it is still loading.
+        if (target !== undefined)
+          for (const element of 'boundingBox' in target ? [target] : target) await element.waitFor()
         await see()
         const original = await page.evaluate(() => document.documentElement.dataset['theme'])
         const padding = options?.padding ?? 12
