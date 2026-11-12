@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { open, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -528,20 +528,22 @@ export class MediaToolkit {
 
   async #probe(input: string, options: RunOptions): Promise<MediaProbe> {
     const { ffprobe } = this.#require()
-    const result = await this.#run(
-      ffprobe,
-      [
-        '-hide_banner',
-        '-v',
-        'error',
-        '-print_format',
-        'json',
-        '-show_format',
-        '-show_streams',
-        ...MEDIA_INPUT_PREFIX,
-        `file:${input}`,
-      ],
-      { cwd: tmpdir(), readable: [input], timeoutMs: options.timeoutMs ?? 30_000, signal: options.signal },
+    const result = await this.#inScratch((cwd) =>
+      this.#run(
+        ffprobe,
+        [
+          '-hide_banner',
+          '-v',
+          'error',
+          '-print_format',
+          'json',
+          '-show_format',
+          '-show_streams',
+          ...MEDIA_INPUT_PREFIX,
+          `file:${input}`,
+        ],
+        { cwd, readable: [input], timeoutMs: options.timeoutMs ?? 30_000, signal: options.signal },
+      ),
     )
     let parsed: z.output<typeof ProbeOutputSchema>
     try {
@@ -649,7 +651,9 @@ export class MediaToolkit {
     const { ffmpeg } = this.#require()
     let known = this.#encoders.get(ffmpeg)
     if (known === undefined) {
-      known = this.#run(ffmpeg, ['-hide_banner', '-encoders'], { cwd: tmpdir(), readable: [], timeoutMs: 30_000 }).then(
+      known = this.#inScratch((cwd) =>
+        this.#run(ffmpeg, ['-hide_banner', '-encoders'], { cwd, readable: [], timeoutMs: 30_000 }),
+      ).then(
         (result) =>
           new Set([...result.stdout.toString('utf8').matchAll(/^ [VAS][A-Z.]{5} (\S+)/gmu)].map((match) => match[1]!)),
       )
@@ -698,6 +702,16 @@ export class MediaToolkit {
   ) {
     const { ffmpeg } = this.#require()
     return this.#run(ffmpeg, ['-nostdin', '-hide_banner', '-nostats', '-y', ...args], options)
+  }
+
+  /** Runs that write nothing still need a workspace; the Windows sandbox refuses the temp root itself as one. */
+  async #inScratch<T>(run: (cwd: string) => Promise<T>): Promise<T> {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media-'))
+    try {
+      return await run(cwd)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   }
 
   async #run(

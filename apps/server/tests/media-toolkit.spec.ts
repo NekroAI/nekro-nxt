@@ -6,7 +6,12 @@ import path from 'node:path'
 import sharp from 'sharp'
 import { isSilk } from 'silk-wasm'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { ConfinedProgramRunner, createProgramSandbox } from '../src/confined-program.ts'
+import {
+  ConfinedProgramRunner,
+  createProgramSandbox,
+  type ConfinedProgramRequest,
+  type ConfinedProgramResult,
+} from '../src/confined-program.ts'
 import { commonMediaDirectories, findSystemMediaPrograms } from '../src/media-ffmpeg.ts'
 import { MediaError, MediaToolkit } from '../src/media-toolkit.ts'
 
@@ -44,6 +49,43 @@ describe('media processing without ffmpeg', () => {
     } finally {
       await rm(file, { force: true })
     }
+  })
+})
+
+describe('media processing workspace', () => {
+  it('gives probes their own directory, never the temp root the Windows sandbox reserves', async () => {
+    const seen: string[] = []
+    const toolkit = new MediaToolkit({
+      programs: () => ({ ffmpeg: '/media/ffmpeg', ffprobe: '/media/ffprobe' }),
+      runner: new (class extends ConfinedProgramRunner {
+        override async run(request: ConfinedProgramRequest): Promise<ConfinedProgramResult> {
+          seen.push(request.cwd)
+          expect((await stat(request.cwd)).isDirectory()).toBe(true)
+          return {
+            exitCode: 0,
+            timedOut: false,
+            stdout: Buffer.from('{"format":{"format_name":"mov"},"streams":[]}'),
+            stderr: '',
+            truncated: false,
+            confinement: 'full',
+          }
+        }
+      })({
+        sandbox: { confine: () => Promise.reject(new Error('unused')) },
+        confinement: { hidden: [], readable: [] },
+      }),
+    })
+    const file = path.join(realpathSync(tmpdir()), `nekro-nxt-media-cwd-${process.pid}.mp4`)
+    await writeFile(file, 'not silk')
+    try {
+      await expect(toolkit.probe(file)).resolves.toMatchObject({ format: 'mov' })
+    } finally {
+      await rm(file, { force: true })
+    }
+    expect(seen).toHaveLength(1)
+    expect(path.resolve(seen[0]!)).not.toBe(path.resolve(tmpdir()))
+    expect(path.dirname(seen[0]!)).toBe(tmpdir())
+    await expect(stat(seen[0]!)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
 
