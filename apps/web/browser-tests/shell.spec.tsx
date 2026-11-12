@@ -1479,7 +1479,11 @@ test.describe('shell, channels and live', () => {
       swipe: async (target: Locator, distance: number) => {
         const { x, y } = await centre(target)
         await send('touchStart', { x, y })
-        for (let step = 1; step <= 8; step++) await send('touchMove', { x, y: y - (step * distance) / 8 })
+        // Slow the finger before lifting so this scroll finishes without an inertial fling.
+        for (let step = 1; step <= 8; step++) {
+          await send('touchMove', { x, y: y - distance * (1 - (1 - step / 8) ** 3) })
+          await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => done(null))))
+        }
         await send('touchEnd')
       },
       /**
