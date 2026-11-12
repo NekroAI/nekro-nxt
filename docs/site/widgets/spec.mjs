@@ -2,7 +2,11 @@
 // data that becomes four things: the interactive version on the site (runtime/), a text version for agents and search
 // (describe), still images of its key states and, for animated ones, a GIF (scripts/docs-widgets.mjs).
 // Format and rules: docs/site/BUNDLE.md.
-import { parse as parseYaml } from 'yaml'
+import { createRequire } from 'node:module'
+
+// Loaded on first use: uploading a built bundle reads this module but parses no YAML, and runs without dependencies.
+const require = createRequire(import.meta.url)
+const parseYaml = (source) => require('yaml').parse(source)
 
 export const WIDGET_FENCE = /^```nxt:([a-z-]+)\s*$/u
 /** What a widget block becomes in the bundle's markdown: the site and the text version look it up by id. */

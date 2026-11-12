@@ -477,9 +477,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+          cache: pnpm
+      # Building the documentation needs the YAML parser and esbuild (widget runtime).
+      - run: pnpm install --frozen-lockfile
       - name: Download complete candidates
         uses: actions/download-artifact@v4
         with:
@@ -524,6 +530,7 @@ jobs:
           path: .local/docs-shots
       # Documentation for nxt.nekro.ai/docs/preview, built from the same commit as the installers (docs/site/BUNDLE.md).
       - name: Publish Preview documentation
+        id: docs
         if: ${{ vars.R2_ACCOUNT_ID != '' }}
         continue-on-error: true
         env:
@@ -531,3 +538,5 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/docs-bundle.mjs build preview && node scripts/docs-bundle.mjs upload preview
+      - if: steps.docs.outcome == 'failure'
+        run: echo "::warning title=使用文档::预览版文档没有发布，nxt.nekro.ai/docs/preview 仍是上一版。"
