@@ -3,6 +3,17 @@ import { useState } from 'preact/hooks'
 import type { Mode, WizardData } from './types.js'
 
 /**
+ * Bundle links are written for the stable site; a reader on Preview stays in Preview, as the site does for prose links
+ * (docsHref in nekro-nxt-community).
+ */
+const docsHref = (href: string) =>
+  /^\/docs(?:[/#?]|$)/u.test(href) &&
+  !/^\/docs\/preview(?:[/#?]|$)/u.test(href) &&
+  /^\/docs\/preview(?:\/|$)/u.test(globalThis.location?.pathname ?? '')
+    ? `/docs/preview${href.slice('/docs'.length)}`
+    : href
+
+/**
  * 排查向导: one question at a time; each answer leads to the next question or to what to do. The answers so far stay
  * above it, and picking one goes back there. Posters show the first question.
  */
@@ -73,7 +84,7 @@ export const Wizard = ({ title, data, mode }: { title: string; data: WizardData;
           <div class="answer">
             <p>{current.answer}</p>
             {current.link === undefined ? null : (
-              <a href={current.link} target="_top">
+              <a href={docsHref(current.link)} target="_top">
                 查看详细说明 →
               </a>
             )}
