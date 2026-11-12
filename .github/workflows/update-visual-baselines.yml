@@ -29,6 +29,10 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same
+      # security pocket, and apt still checks every package against Ubuntu's signing keys.
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
       - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       - run: pnpm build
       - run: pnpm exec playwright test apps/web/e2e/product-quality.spec.ts --update-snapshots

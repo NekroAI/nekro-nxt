@@ -46,6 +46,10 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The login page tests drive a real browser (passkeys, camera scanning).
+      # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same
+      # security pocket, and apt still checks every package against Ubuntu's signing keys.
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
       - run: pnpm exec playwright install --with-deps chromium-headless-shell
       - run: pnpm test:coverage
 
@@ -65,6 +69,10 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same
+      # security pocket, and apt still checks every package against Ubuntu's signing keys.
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
       - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       # The pages resolve workspace packages to source, but the Playwright specs import their built entries.
       - run: pnpm build
@@ -86,6 +94,10 @@ jobs:
           node-version: 22.23.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same
+      # security pocket, and apt still checks every package against Ubuntu's signing keys.
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
       - run: pnpm exec playwright install --with-deps chromium chromium-headless-shell
       - run: pnpm build
       - run: pnpm test:journey:built
@@ -119,6 +131,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm smoke:better-sqlite3
       # The login page tests drive a real browser (passkeys, camera scanning).
+      # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same
+      # security pocket, and apt still checks every package against Ubuntu's signing keys.
+      - name: Use the Azure mirror for Ubuntu security updates
+        run: grep -rlE 'security\.ubuntu\.com' /etc/apt | xargs -r sudo sed -i -E 's#https?://security\.ubuntu\.com#http://azure.archive.ubuntu.com#g'
       - run: pnpm exec playwright install --with-deps chromium-headless-shell
       - run: pnpm test
 
