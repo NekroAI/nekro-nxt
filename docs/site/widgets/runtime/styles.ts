@@ -70,26 +70,34 @@ button { font: inherit; color: inherit; }
 .muted { color: var(--muted); }
 
 /* 截图导览 */
-.tour { display: grid; gap: 16px; }
-@container (min-width: 640px) { .tour { grid-template-columns: minmax(0, 1.75fr) minmax(200px, 1fr); align-items: start; } }
+.tour { display: grid; gap: 14px; }
 .frame { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.zoom { position: relative; transform-origin: 0 0; transition: transform 420ms cubic-bezier(0.2, 0.8, 0.2, 1); }
 .frame img { display: block; width: 100%; height: auto; }
 .spot {
-  position: absolute; border-radius: 8px; pointer-events: none;
-  outline: 2px solid var(--accent-line); outline-offset: 2px;
+  position: absolute; border-radius: calc(8px / var(--zoom, 1)); pointer-events: none;
+  outline: calc(2px / var(--zoom, 1)) solid var(--accent-line); outline-offset: calc(2px / var(--zoom, 1));
   transition: box-shadow 260ms ease, outline-color 260ms ease;
 }
-.spot.on { outline: 2.5px solid var(--accent-fill); box-shadow: 0 0 0 9999px var(--scrim); }
+.spot.on { outline: calc(2.5px / var(--zoom, 1)) solid var(--accent-fill); box-shadow: 0 0 0 9999px var(--scrim); }
 .frame.focused .spot:not(.on) { outline-color: transparent; }
 .pin {
   position: absolute; z-index: 1; width: 24px; height: 24px; margin: -12px 0 0 -12px; padding: 0;
+  transition: left 420ms cubic-bezier(0.2, 0.8, 0.2, 1), top 420ms cubic-bezier(0.2, 0.8, 0.2, 1), transform 200ms ease, opacity 200ms ease;
   display: grid; place-items: center; border: 2px solid var(--surface); border-radius: 999px;
   background: var(--accent-fill); color: var(--on-accent); font-size: 12px; font-weight: 700; line-height: 1;
-  box-shadow: 0 2px 6px rgb(0 0 0 / 0.25); cursor: pointer; transition: transform 200ms ease, opacity 200ms ease;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.25); cursor: pointer;
 }
 .frame.focused .pin:not(.on) { opacity: 0; pointer-events: none; }
 .pin.on { transform: scale(1.12); }
-.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); }
+dialog.full {
+  max-width: 96vw; max-height: 94vh; padding: 44px 12px 12px; overflow: auto;
+  border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--fg-2);
+}
+dialog.full::backdrop { background: var(--scrim); }
+dialog.full img { display: block; max-width: none; height: auto; border-radius: 6px; }
+.close { position: absolute; top: 8px; right: 12px; }
 .step {
   display: flex; gap: 10px; width: 100%; padding: 8px 10px; text-align: left; cursor: pointer;
   border: 1px solid transparent; border-radius: 10px; background: none; line-height: 1.55;
