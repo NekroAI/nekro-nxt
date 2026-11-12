@@ -97,7 +97,7 @@ jobs:
           {
             echo "NekroNXT 安卓应用 $NXT_ANDROID_VERSION_NAME，Android 10 及以上。"
             echo
-            echo "安装后在已登录的电脑或浏览器上打开「设置 → 登录与访问 → 连接安卓应用」，用应用扫码连接。说明见[手机使用说明](https://github.com/$GITHUB_REPOSITORY/blob/main/docs/guide/mobile.md)。"
+            echo "安装后在已登录的电脑或浏览器上打开「设置 → 登录与访问 → 连接安卓应用」，用应用扫码连接。说明见[手机使用说明](https://nxt.nekro.ai/docs/install/mobile)。"
             echo
             echo "- 安装包 SHA-256：\`$sha\`"
             echo "- 签名证书 SHA-256：\`$certificate\`"

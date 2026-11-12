@@ -123,7 +123,7 @@ export function previewReleaseBody(release, repository, distribution, serverDige
     if (!target) throw new Error(`滚动预览版缺少下载目标：${platform}/${arch}`)
     return `[${label}](${assetUrl(target.artifactName)})`
   }
-  const guide = (file) => `https://github.com/${repository}/blob/main/docs/guide/${file}`
+  const guide = (page) => `https://nxt.nekro.ai/docs/${page}`
   return [
     `<!-- nxt-preview-commit:${release.commit} -->`,
     ...(serverDigest ? [`<!-- nxt-preview-server:${serverDigest} -->`] : []),
@@ -140,18 +140,18 @@ export function previewReleaseBody(release, repository, distribution, serverDige
     `| Linux | x64 | ${downloadLink('linux', 'x64', '下载 AppImage')} |`,
     `| Android | Android 10 及以上 | [下载 APK](${assetUrl(androidArtifactName('preview', release.version))}) |`,
     '',
-    `安装包的版本、文件大小和 SHA-256 已由发布流程核对。首次安装或遇到系统拦截时，请查看[桌面版安装说明](${guide('desktop.md')})。`,
+    `安装包的版本、文件大小和 SHA-256 已由发布流程核对。首次安装或遇到系统拦截时，请查看[桌面版安装说明](${guide('install/desktop')})。`,
     '',
     '## 手机',
     '',
     '- **Android 应用**：上表的 APK 是开发版，名为「NekroNXT 开发版」，可以和正式版同时安装，以后在应用里提示更新。在已登录的电脑或浏览器上打开「设置 → 登录与访问 → 连接安卓应用」，用应用扫码即可连接。',
     '- **iPhone、iPad 和其他设备（PWA）**：在浏览器里打开实例地址并登录，iPhone 和 iPad 在 Safari 点「分享 → 添加到主屏幕」，安卓的 Chrome 点菜单里的「安装应用」。添加到主屏幕需要受信任的 HTTPS 地址。',
     '',
-    `手机在外面使用时，实例要能从公网访问。详见[手机使用说明](${guide('mobile.md')})。`,
+    `手机在外面使用时，实例要能从公网访问。详见[手机使用说明](${guide('install/mobile')})。`,
     '',
     '## 服务端',
     '',
-    `镜像：\`ghcr.io/${repository.toLowerCase()}:preview\`（amd64 / arm64）· [部署说明](${guide('server.md')})`,
+    `镜像：\`ghcr.io/${repository.toLowerCase()}:preview\`（amd64 / arm64）· [部署说明](${guide('install/docker')})`,
     '',
     '## 版本信息',
     '',

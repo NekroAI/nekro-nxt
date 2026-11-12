@@ -216,6 +216,15 @@ jobs:
           R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
         run: node scripts/mirror-desktop-release.mjs stable --artifacts-dir .local/stable-release
+      # Documentation for nxt.nekro.ai/docs, built from the same commit as the installers (docs/site/BUNDLE.md).
+      - name: Publish Stable documentation
+        if: ${{ vars.R2_ACCOUNT_ID != '' }}
+        continue-on-error: true
+        env:
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: node scripts/docs-bundle.mjs build stable && node scripts/docs-bundle.mjs upload stable
       # Only after the Release is out, so extension authors never get an SDK the stable NekroNXT does not know yet
       # (docs/09 §6). Needs each package's trusted publisher on npm with 「Allow npm dist-tag」, and npm ≥ 12.2.
       - name: Point the shared packages' latest at this release

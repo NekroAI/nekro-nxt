@@ -7,7 +7,7 @@ import systemStyles from '../system/system.module.css'
 import styles from './shell.module.css'
 
 const HINT_KEY = 'nekro-nxt.home-screen-hint'
-const HTTPS_GUIDE = 'https://github.com/NekroAI/nekro-nxt/blob/main/docs/guide/server.md#通过反向代理使用-https'
+const HTTPS_GUIDE = 'https://nxt.nekro.ai/docs/install/https#通过反向代理使用-https'
 
 const readDismissed = (): boolean => {
   try {

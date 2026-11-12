@@ -167,7 +167,7 @@ test('rolling Preview copy identifies its moving channel and immutable Product R
   assert.match(body, /NekroAI\/nekro-nxt\/commit\/0123456789abcdef/u)
   assert.match(body, /ghcr\.io\/nekroai\/nekro-nxt:preview/u)
   assert.match(body, /SHA-256 已由发布流程核对/u)
-  assert.match(body, /blob\/main\/docs\/guide\/desktop\.md/u)
+  assert.match(body, /nxt\.nekro\.ai\/docs\/install\/desktop/u)
   assert.doesNotMatch(body, /receipt\.json/u)
   assert.match(body, /\| macOS \| Apple Silicon（arm64） \| \[下载 DMG\]/u)
   assert.match(body, /\| macOS \| Intel（x64） \| \[下载 DMG\]/u)
@@ -179,7 +179,7 @@ test('rolling Preview copy identifies its moving channel and immutable Product R
   )
   assert.match(body, /## 手机/u)
   assert.match(body, /添加到主屏幕/u)
-  assert.match(body, /blob\/main\/docs\/guide\/mobile\.md/u)
+  assert.match(body, /nxt\.nekro\.ai\/docs\/install\/mobile/u)
   assert.match(
     body,
     /releases\/download\/preview\/nekro-nxt-preview-mac-arm64-v1\.4\.0-20250615-150640utc\.g0123456789ab\.dmg/u,

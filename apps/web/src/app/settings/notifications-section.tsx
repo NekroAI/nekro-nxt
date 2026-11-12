@@ -25,7 +25,7 @@ import { useManagementAccessAvailable } from './access-section.js'
 import { SectionHead } from './section-head.js'
 import styles from './settings.module.css'
 
-const REMOTE_ACCESS_GUIDE = 'https://github.com/NekroAI/nekro-nxt/blob/main/docs/guide/server.md#通过反向代理使用-https'
+const REMOTE_ACCESS_GUIDE = 'https://nxt.nekro.ai/docs/install/https#通过反向代理使用-https'
 
 export function NotificationsSection() {
   const api = useProductApi()
