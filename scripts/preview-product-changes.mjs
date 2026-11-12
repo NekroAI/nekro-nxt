@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
-import { hasPreviewProductChanges, publishedPreviewCommit } from './lib/preview-changes.mjs'
+import { hasPreviewDocsChanges, hasPreviewProductChanges, publishedPreviewCommit } from './lib/preview-changes.mjs'
 
 function run(command, args, allowMissing = false) {
   const result = spawnSync(command, args, { encoding: 'utf8' })
@@ -19,15 +19,18 @@ let previous = publishedPreviewCommit(release)
 if (!previous && release && !release.draft)
   previous = run('git', ['rev-parse', '--verify', 'refs/tags/preview^{commit}'])
 const forced = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch'
-const changed =
-  forced ||
-  !previous ||
-  hasPreviewProductChanges(
-    (run('git', ['diff', '--name-only', '-z', previous, 'HEAD']) ?? '').split('\0').filter(Boolean),
-  )
-if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `build=${changed}\n`)
+const paths = previous
+  ? (run('git', ['diff', '--name-only', '-z', previous, 'HEAD']) ?? '').split('\0').filter(Boolean)
+  : []
+const changed = forced || !previous || hasPreviewProductChanges(paths)
+// Without a product change, documentation changes since the last Preview are published on their own; doing it again
+// on later pushes is harmless and keeps the latest.
+const docs = !changed && hasPreviewDocsChanges(paths)
+if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `build=${changed}\ndocs=${docs}\n`)
 console.log(
   changed
     ? 'Unpublished product changes require Preview.'
-    : 'No unpublished product changes; Preview remains unchanged.',
+    : docs
+      ? 'Only documentation changed; publishing Preview documentation alone.'
+      : 'No unpublished product changes; Preview remains unchanged.',
 )

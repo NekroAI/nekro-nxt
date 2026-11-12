@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { hasPreviewProductChanges, publishedPreviewCommit } from '../lib/preview-changes.mjs'
+import { hasPreviewDocsChanges, hasPreviewProductChanges, publishedPreviewCommit } from '../lib/preview-changes.mjs'
 import { assertServerPreviewReceipt, publishPreviewTransaction } from '../rolling-preview-release.mjs'
 
 test('Preview includes all unpublished product changes and conservatively includes unknown paths', () => {
@@ -14,6 +14,10 @@ test('Preview includes all unpublished product changes and conservatively includ
     'assets/brand/icon.svg',
   ])
     assert.equal(hasPreviewProductChanges([file]), true)
+  // User documentation alone is published without rebuilding the installers.
+  assert.equal(hasPreviewProductChanges(['docs/site/start/concepts.md']), false)
+  assert.equal(hasPreviewDocsChanges(['docs/site/start/concepts.md']), true)
+  assert.equal(hasPreviewDocsChanges(['docs/guide/a.md', 'docs/09-extensions.md']), false)
   const commit = 'a'.repeat(40)
   assert.equal(publishedPreviewCommit({ draft: false, body: `<!-- nxt-preview-commit:${commit} -->` }), commit)
   assert.equal(publishedPreviewCommit({ draft: true, body: `<!-- nxt-preview-commit:${commit} -->` }), undefined)
