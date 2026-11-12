@@ -756,15 +756,26 @@ export class QQOpenClawConnection implements AdapterConnectionRuntime {
       })
     }
     for (const [attachmentIndex, attachment] of (message.attachments ?? []).entries()) {
-      const imported = await inbound.importAttachment({
-        ...attachment,
-        connectionId: this.#context.connectionId,
-        channelId,
-        platformMessageId: message.platformMessageId,
-        receivedAt,
-        attachmentIndex,
-        signal,
-      })
+      // One attachment that cannot be read leaves a note where it stood; the text beside it still arrives.
+      let imported: { readonly assetId: AssetId; readonly mediaType: string; readonly fileName?: string } | undefined
+      try {
+        imported = await inbound.importAttachment({
+          ...attachment,
+          connectionId: this.#context.connectionId,
+          channelId,
+          platformMessageId: message.platformMessageId,
+          receivedAt,
+          attachmentIndex,
+          signal,
+        })
+      } catch {
+        signal.throwIfAborted()
+        imported = undefined
+      }
+      if (imported === undefined) {
+        parts.push({ type: 'text', text: '附件未能读取。' })
+        continue
+      }
       assetOccurrences.push({ partIndex: parts.length, assetId: imported.assetId })
       if (imported.mediaType.startsWith('image/')) {
         parts.push({
