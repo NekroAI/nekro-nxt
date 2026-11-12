@@ -4,7 +4,9 @@
       "id": "start",
       "title": "开始使用",
       "pages": [
-        "quickstart"
+        "quickstart",
+        "concepts",
+        "first-group"
       ]
     },
     {

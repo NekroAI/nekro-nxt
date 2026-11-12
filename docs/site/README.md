@@ -6,7 +6,9 @@
 
 ## 开始使用
 
-- [快速开始](start/quickstart.md)：从安装到在内置频道里和智能体说上第一句话。
+- [快速开始](start/quickstart.md)：从安装到在内置频道里和智能体说上第一句话，再把它接进群聊。
+- [基本概念](start/concepts.md)：智能体、频道、平台账号、接线、扩展各是什么，彼此怎么连在一起。
+- [把她拉进第一个群](start/first-group.md)：以 QQ 官方机器人为例，从添加平台账号到智能体在群里回复。
 
 ## 安装与部署
 
@@ -44,8 +46,8 @@
 
 ## 排障
 
-- [安装与启动](troubleshooting/install.md)：安装包被系统拦截、桌面版连不上服务时怎么办。
-- [模型与回复](troubleshooting/models.md)：模型列表为空、智能体不回复时怎么排查。
-- [平台接入](troubleshooting/platforms.md)：平台频道没有出现时怎么排查。
-- [扩展](troubleshooting/extensions.md)：扩展保存后没有生效时怎么排查。
+- [安装与启动](troubleshooting/install.md)：打不开、一直在启动、连不上服务器、升级后起不来、Docker 容器反复重启时怎么办。
+- [模型与回复](troubleshooting/models.md)：智能体不回复、回复很慢、模型报错、测试连接失败、额度用完时怎么排查。
+- [平台接入](troubleshooting/platforms.md)：群没出现在接线里、收不到消息、发不出去、一直正在连接、图片语音收发异常时怎么排查。
+- [扩展](troubleshooting/extensions.md)：扩展保存了没生效、试运行失败、保存按钮不能点、等待确认、版本冲突时怎么处理。
 - [反馈问题](troubleshooting/report.md)：在社区或 GitHub 反馈问题，以及让智能体帮你起草。
