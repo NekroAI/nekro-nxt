@@ -90,7 +90,7 @@ button { font: inherit; color: inherit; }
 }
 .frame.focused .pin:not(.on) { opacity: 0; pointer-events: none; }
 .pin.on { transform: scale(1.12); }
-.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15rem), 1fr)); }
+.steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr)); }
 dialog.full {
   max-width: 96vw; max-height: 94vh; padding: 44px 12px 12px; overflow: auto;
   border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--fg-2);
