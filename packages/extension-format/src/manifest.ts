@@ -214,7 +214,7 @@ const checkConfig = (
     ['host', value.permissions.host?.network],
     ['agent', value.permissions.agent?.network],
   ] as const) {
-    if (network?.mode !== 'config') continue
+    if (network === undefined || network.mode === 'domains' || network.fields === undefined) continue
     const own = new Map(
       fields.filter((field) => field.layer === layer).map((field) => [field.key, field.kind] as const),
     )

@@ -14,7 +14,16 @@ export type ExtensionEgressPolicy =
       /** Hosts a person entered, which may resolve to private addresses; all of `hosts` when absent. */
       readonly privateHosts?: readonly string[]
     }
-  | { readonly mode: 'unrestricted' }
+  | {
+      readonly mode: 'unrestricted'
+      /**
+       * Hosts of the config fields the declaration names. Any public host is reachable anyway; these are the only ones
+       * that may also resolve to private addresses, under the same rules as `config` mode.
+       */
+      readonly hosts?: readonly string[]
+      /** Hosts a person entered; all of `hosts` when absent. */
+      readonly privateHosts?: readonly string[]
+    }
 
 export interface ExtensionEgressOptions {
   readonly policy: ExtensionEgressPolicy
@@ -211,8 +220,15 @@ const isPolicyMatch = (policy: ExtensionEgressPolicy, hostname: string, configHo
   return false
 }
 
+/** The configured host this hostname and port name, for the modes that read addresses from config fields. */
+const findConfigHost = (policy: ExtensionEgressPolicy, hostPort: string): string | undefined =>
+  policy.mode === 'domains' ? undefined : policy.hosts?.find((host) => host === hostPort)
+
+/** Only a host a person entered may reach a private network, the same in `config` and `unrestricted` mode. */
 const isPrivateNetworkAllowed = (policy: ExtensionEgressPolicy, configHost?: string): boolean =>
-  policy.mode === 'config' && configHost !== undefined && (policy.privateHosts ?? policy.hosts).includes(configHost)
+  policy.mode !== 'domains' &&
+  configHost !== undefined &&
+  (policy.privateHosts ?? policy.hosts ?? []).includes(configHost)
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
@@ -482,10 +498,7 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
         isLocalHostname = true
       }
 
-      const configHost =
-        options.policy.mode === 'config'
-          ? options.policy.hosts.find((h) => h === `${hostname}${url.port ? `:${url.port}` : ''}`)
-          : undefined
+      const configHost = findConfigHost(options.policy, `${hostname}${url.port ? `:${url.port}` : ''}`)
       const canAccessPrivate = isPrivateNetworkAllowed(options.policy, configHost)
 
       if (!isPolicyMatch(options.policy, hostname, configHost)) {
@@ -536,7 +549,7 @@ export const createExtensionEgress = (options: ExtensionEgressOptions) => {
           if (!canAccessPrivate) {
             throw new ExtensionEgressError(
               'private-address',
-              `访问被拒：不允许访问本机或私网地址 ${hostname}。需要访问内网服务时，请使用 config 网络模式并让用户在配置中填写该地址。`,
+              `访问被拒：不允许访问本机或私网地址 ${hostname}。需要访问内网服务时，在 network.fields 中声明地址字段，并让用户在配置中填写该地址。`,
             )
           }
         }

@@ -154,6 +154,24 @@ describe('extensionCapabilitiesExpand', () => {
       { network: { mode: 'unrestricted', purpose: '另一种说法' } },
       false,
     ],
+    [
+      'address field added to unrestricted',
+      { network: { mode: 'unrestricted', purpose: '读取任意链接' } },
+      { network: { mode: 'unrestricted', purpose: '读取任意链接', fields: ['baseUrl'] } },
+      true,
+    ],
+    [
+      'config with the same field raised to unrestricted',
+      { network: { mode: 'config', fields: ['baseUrl'] } },
+      { network: { mode: 'unrestricted', purpose: '读取任意链接', fields: ['baseUrl'] } },
+      true,
+    ],
+    [
+      'address field dropped from unrestricted',
+      { network: { mode: 'unrestricted', purpose: '读取任意链接', fields: ['baseUrl', 'mirror'] } },
+      { network: { mode: 'unrestricted', purpose: '读取任意链接', fields: ['mirror'] } },
+      false,
+    ],
     ['new storage scope', { storage: { scopes: ['agent'] } }, { storage: { scopes: ['agent', 'shared'] } }, true],
     ['quota only', { storage: { scopes: ['agent'] } }, { storage: { scopes: ['agent'], quotaBytes: 4096 } }, false],
     ['history added', {}, { history: { read: true } }, true],
@@ -316,7 +334,19 @@ describe('summarizeExtensionCapabilities', () => {
     ])
     expect(
       summarizeExtensionCapabilities(caps({ network: { mode: 'unrestricted', purpose: '打开任意链接' } }))[0],
-    ).toMatchObject({ risk: 'high', detail: '打开任意链接' })
+    ).toMatchObject({ risk: 'high', label: '访问任意公网地址', detail: '打开任意链接' })
+    expect(
+      summarizeExtensionCapabilities(
+        caps({ network: { mode: 'unrestricted', purpose: '下载生成的图片', fields: ['baseUrl'] } }),
+        { fieldTitle: (key) => (key === 'baseUrl' ? '服务地址' : key) },
+      )[0],
+    ).toEqual({
+      key: 'network',
+      risk: 'high',
+      label: '访问任意公网地址和你在配置中填写的地址',
+      detail: '下载生成的图片；配置地址：服务地址',
+    })
+    expect(() => caps({ network: { mode: 'unrestricted', purpose: '下载生成的图片', fields: [] } })).toThrow()
   })
 })
 
@@ -547,6 +577,23 @@ describe('work files, asset reads and high-detail tool images', () => {
       requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ host: { assets: { library: {} } } })).level,
     ).toBe(8)
     expect(EXTENSION_FILES_SDK_LEVEL).toBe(14)
+  })
+
+  it('needs SDK level 16 for address fields under unrestricted network access', () => {
+    for (const layer of ['agent', 'host'] as const) {
+      expect(
+        requiredExtensionSdkLevel(
+          ExtensionPermissionsSchema.parse({
+            [layer]: { files: {}, network: { mode: 'unrestricted', purpose: '下载生成的图片', fields: ['baseUrl'] } },
+          }),
+        ),
+      ).toEqual({ level: 16, capabilities: ['任意网络下的配置地址'] })
+    }
+    expect(
+      requiredExtensionSdkLevel(
+        ExtensionPermissionsSchema.parse({ agent: { network: { mode: 'unrestricted', purpose: '下载生成的图片' } } }),
+      ).level,
+    ).toBe(7)
   })
 })
 

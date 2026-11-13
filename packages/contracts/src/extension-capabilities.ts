@@ -12,8 +12,12 @@ import { z } from 'zod'
  * long-running tools (`timeoutSeconds`, `execute(args, { signal, progress })`), media processing (`media`), command
  * profiles (`commands`) and speech to text (`speech`).
  * Level 15 adds downloads into work files (`files.fromUrl`).
+ * Level 16 adds address fields to `network.mode: 'unrestricted'`, so addresses a person entered may be private.
  */
-export const EXTENSION_SDK_LEVEL = 15
+export const EXTENSION_SDK_LEVEL = 16
+
+/** `network: { mode: 'unrestricted', fields }` needs this level. */
+export const EXTENSION_UNRESTRICTED_FIELDS_SDK_LEVEL = 16
 
 /** `files.fromUrl` needs this level; it adds no declaration, so the host checks the level when it is called. */
 export const EXTENSION_DOWNLOAD_SDK_LEVEL = 15
@@ -54,6 +58,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 13, version: '0.7.0' },
   { level: 14, version: '0.8.0' },
   { level: 15, version: '0.8.1' },
+  { level: 16, version: '0.10.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -76,6 +81,8 @@ export const ExtensionNetworkDomainSchema = z
     message: '网络域名必须是 api.example.com 或 *.example.com 形式，不含协议、端口和路径。',
   })
 
+const ExtensionNetworkFieldsSchema = z.array(z.string().trim().min(1).max(64)).min(1).max(8)
+
 export const ExtensionNetworkCapabilitySchema = z.discriminatedUnion('mode', [
   z
     .object({
@@ -87,7 +94,7 @@ export const ExtensionNetworkCapabilitySchema = z.discriminatedUnion('mode', [
     .object({
       mode: z.literal('config'),
       /** Top-level config fields whose current value is a URL or host the user typed. */
-      fields: z.array(z.string().trim().min(1).max(64)).min(1).max(8),
+      fields: ExtensionNetworkFieldsSchema,
     })
     .strict(),
   z
@@ -95,6 +102,11 @@ export const ExtensionNetworkCapabilitySchema = z.discriminatedUnion('mode', [
       mode: z.literal('unrestricted'),
       /** Shown to the user next to the risk acknowledgement. */
       purpose: z.string().trim().min(4).max(200),
+      /**
+       * Config fields holding a service address, read as in `config` mode: any public host is reachable anyway, and the
+       * addresses a person entered here may also be on this machine or the local network (level 16).
+       */
+      fields: ExtensionNetworkFieldsSchema.optional(),
     })
     .strict(),
 ])
@@ -609,6 +621,10 @@ const networkExpands = (
   if (next.mode === 'config' && previous.mode === 'config') {
     return next.fields.some((field) => !previous.fields.includes(field))
   }
+  if (next.mode === 'unrestricted' && previous.mode === 'unrestricted') {
+    // New address fields let the extension reach more of the local network.
+    return (next.fields ?? []).some((field) => !(previous.fields ?? []).includes(field))
+  }
   return false
 }
 
@@ -754,7 +770,15 @@ export const summarizeExtensionCapabilities = (
       detail: network.fields.map((field) => options.fieldTitle?.(field) ?? field).join('、'),
     })
   } else if (network?.mode === 'unrestricted') {
-    items.push({ key: 'network', risk: 'high', label: '访问任意公网地址', detail: network.purpose })
+    items.push({
+      key: 'network',
+      risk: 'high',
+      label: network.fields === undefined ? '访问任意公网地址' : '访问任意公网地址和你在配置中填写的地址',
+      detail:
+        network.fields === undefined
+          ? network.purpose
+          : `${network.purpose}；配置地址：${network.fields.map((field) => options.fieldTitle?.(field) ?? field).join('、')}`,
+    })
   }
   if (capabilities.storage !== undefined && options.layer === 'host') {
     items.push({ key: 'storage', risk: 'normal', label: '在本机保存扩展数据，页面与启用它的智能体共用' })

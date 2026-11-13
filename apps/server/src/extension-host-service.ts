@@ -93,8 +93,8 @@ export interface NxtServiceBinding {
   /** Host configuration of an agent binding; secrets declared in `config.host` resolve from it. */
   readonly hostConfig?: () => JsonValue
   /**
-   * The part of `config` a person entered, when not all of it was: under `network.mode: 'config'` only addresses in
-   * these values may reach private networks. Dynamic runs set it, since the agent provides their other values.
+   * The part of `config` a person entered, when not all of it was: only addresses in these values of the fields
+   * `network.fields` names may reach private networks. Dynamic runs set it, since the agent provides their other values.
    */
   readonly userEnteredConfig?: () => JsonValue
   /**
@@ -149,7 +149,11 @@ export interface NxtStorageBackend {
 export type NxtEgressPolicy =
   | { readonly mode: 'domains'; readonly domains: readonly string[] }
   | { readonly mode: 'config'; readonly hosts: readonly string[]; readonly privateHosts?: readonly string[] }
-  | { readonly mode: 'unrestricted' }
+  | {
+      readonly mode: 'unrestricted'
+      readonly hosts?: readonly string[]
+      readonly privateHosts?: readonly string[]
+    }
 
 export interface NxtDownloadTarget {
   readonly path: string
@@ -367,16 +371,17 @@ const configHosts = (config: JsonValue, fields: readonly string[]): readonly str
 const egressPolicy = (binding: NxtServiceBinding): NxtEgressPolicy => {
   const network = requireCapability(binding, 'network', 'network（出站网络）')
   if (network.mode === 'domains') return { mode: 'domains', domains: network.domains }
-  if (network.mode === 'config') {
-    return {
-      mode: 'config',
-      hosts: configHosts(binding.config(), network.fields),
-      ...(binding.userEnteredConfig === undefined
-        ? {}
-        : { privateHosts: configHosts(binding.userEnteredConfig(), network.fields) }),
-    }
+  const fields = network.fields
+  if (fields === undefined) return { mode: 'unrestricted' }
+  // The same hosts in both modes: what the named fields hold now, and of those only what a person entered may reach
+  // a private network.
+  const hosts = {
+    hosts: configHosts(binding.config(), fields),
+    ...(binding.userEnteredConfig === undefined
+      ? {}
+      : { privateHosts: configHosts(binding.userEnteredConfig(), fields) }),
   }
-  return { mode: 'unrestricted' }
+  return network.mode === 'config' ? { mode: 'config', ...hosts } : { mode: 'unrestricted', ...hosts }
 }
 
 const STORAGE_KEY_PATTERN = /^[\p{L}\p{N}._:/-]{1,256}$/u

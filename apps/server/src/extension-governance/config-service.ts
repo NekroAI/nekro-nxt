@@ -59,13 +59,13 @@ const asRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonVal
 const same = (left: JsonValue | undefined, right: JsonValue | undefined): boolean =>
   JSON.stringify(left ?? null) === JSON.stringify(right ?? null)
 
-/** Fields the Manifest's `network: { mode: 'config' }` reads addresses from, for one layer. */
+/** Fields the Manifest's `network` (`config`, or `unrestricted` with `fields`) reads addresses from, for one layer. */
 export const networkConfigFields = (
   manifest: Pick<Manifest, 'permissions'> | undefined,
   layer: ExtensionConfigLayer,
 ): ReadonlySet<string> => {
   const network = manifest?.permissions[layer]?.network
-  return new Set(network?.mode === 'config' ? network.fields : [])
+  return new Set(network === undefined || network.mode === 'domains' ? [] : (network.fields ?? []))
 }
 
 /** Every field of one layer with its level (智能体扩展配置与凭据 C9); a candidate's declaration works as well. */

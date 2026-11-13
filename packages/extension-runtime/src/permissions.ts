@@ -29,7 +29,9 @@ const canonicalCapabilities = (capabilities: ExtensionCapabilities): ExtensionCa
               ? { mode: 'domains', domains: sorted(network.domains) }
               : network.mode === 'config'
                 ? { mode: 'config', fields: sorted(network.fields) }
-                : network,
+                : network.fields === undefined
+                  ? network
+                  : { ...network, fields: sorted(network.fields) },
         }),
     ...(capabilities.storage === undefined
       ? {}

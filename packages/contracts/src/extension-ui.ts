@@ -4,6 +4,7 @@ import {
   HostLayerCapabilitiesSchema,
   hostLayerAsCapabilities,
   EXTENSION_SDK_BASE_LEVEL,
+  EXTENSION_UNRESTRICTED_FIELDS_SDK_LEVEL,
   EXTENSION_FILES_SDK_LEVEL,
   EXTENSION_OUTBOUND_SDK_LEVEL,
 } from './extension-capabilities.js'
@@ -550,6 +551,11 @@ export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS
 export const requiredExtensionSdkLevel = (
   permissions: ExtensionPermissions | undefined,
 ): { readonly level: number; readonly capabilities: readonly string[] } => {
+  const unrestrictedFields = [permissions?.host?.network, permissions?.agent?.network].some(
+    (network) => network?.mode === 'unrestricted' && network.fields !== undefined,
+  )
+  if (unrestrictedFields)
+    return { level: EXTENSION_UNRESTRICTED_FIELDS_SDK_LEVEL, capabilities: ['任意网络下的配置地址'] }
   const level14 = [
     permissions?.host?.files === undefined && permissions?.agent?.files === undefined ? undefined : '工作文件',
     permissions?.host?.assets?.read === undefined && permissions?.agent?.assets?.read === undefined

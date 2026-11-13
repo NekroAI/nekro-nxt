@@ -162,7 +162,9 @@ export interface ExtensionGovernanceToolPort {
 type ConfigLayer = CandidateConfigField['layer']
 
 /** Permissions as both a saved Manifest and a candidate declare them; only network config fields matter here. */
-type NetworkLayer = { readonly network?: { readonly mode: string; readonly fields?: readonly string[] } | undefined }
+type NetworkLayer = {
+  readonly network?: { readonly mode: string; readonly fields?: readonly string[] | undefined } | undefined
+}
 interface NetworkDeclaration {
   readonly host?: NetworkLayer | undefined
   readonly agent?: NetworkLayer | undefined
@@ -176,7 +178,8 @@ const asRecord = (value: JsonValue | undefined): Readonly<Record<string, JsonVal
 
 const networkFields = (permissions: NetworkDeclaration, layer: ConfigLayer): ReadonlySet<string> => {
   const network = permissions[layer]?.network
-  return new Set(network?.mode === 'config' ? (network.fields ?? []) : [])
+  // `config` and `unrestricted` both name address fields; a person's value there may reach the local network.
+  return new Set(network === undefined || network.mode === 'domains' ? [] : (network.fields ?? []))
 }
 
 /**

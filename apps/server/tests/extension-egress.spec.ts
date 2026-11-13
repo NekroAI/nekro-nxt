@@ -152,6 +152,61 @@ describe('extension egress', () => {
     expect((await failure(provided.fetch(`http://intranet.example.com:${port}/json`))).code).toBe('private-address')
   })
 
+  it('lets unrestricted mode reach a private address only when it is a configured host a person entered', async () => {
+    // `*.localhost` names count as private by name, so public names still reach the fixture server.
+    const nas = `nas.localhost:${port}`
+    const open = egressFor({ mode: 'unrestricted', hosts: [nas] })
+    expect((await open.fetch(`http://${nas}/json`)).status).toBe(200)
+    expect((await open.fetch(`http://images.example.com:${port}/json`)).status).toBe(200)
+    expect((await failure(open.fetch(`http://other.localhost:${port}/json`))).code).toBe('private-address')
+    // The port is part of the configured host.
+    expect((await failure(open.fetch(`http://nas.localhost:${port + 1}/json`))).code).toBe('private-address')
+
+    // Without address fields, and for addresses only the agent provided, private hosts stay blocked.
+    for (const policy of [
+      { mode: 'unrestricted' },
+      { mode: 'unrestricted', hosts: [nas], privateHosts: [] },
+    ] as const) {
+      expect((await failure(egressFor(policy).fetch(`http://${nas}/json`))).code).toBe('private-address')
+    }
+    // Defaults count like in `config` mode: without `privateHosts`, every configured host was entered by a person.
+    const config = egressFor({ mode: 'config', hosts: [nas] })
+    expect((await config.fetch(`http://${nas}/json`)).status).toBe(200)
+  })
+
+  it('lets unrestricted mode reach a configured loopback or LAN address and no other', async () => {
+    const loopback = egressFor({ mode: 'unrestricted', hosts: [`127.0.0.1:${port}`] }, { realPrivateCheck: true })
+    expect((await loopback.fetch(`http://127.0.0.1:${port}/json`)).status).toBe(200)
+
+    const lan = egressFor({ mode: 'unrestricted', hosts: ['192.168.1.20:8080'] }, { realPrivateCheck: true })
+    expect((await failure(lan.fetch('http://192.168.1.21:8080/json'))).code).toBe('private-address')
+    expect((await failure(lan.fetch('http://192.168.1.20:8081/json'))).code).toBe('private-address')
+    expect((await failure(lan.fetch(`http://127.0.0.1:${port}/json`))).code).toBe('private-address')
+
+    // A configured name that resolves to the local network is allowed; DNS answers for other names are not.
+    const resolved = createExtensionEgress({
+      policy: { mode: 'unrestricted', hosts: [`nas.example.lan:${port}`] },
+      timeoutMs: 200,
+      maxResponseBytes: 1024,
+      resolve: () => Promise.resolve([{ address: '127.0.0.1', family: 4 }]),
+    })
+    expect((await resolved.fetch(`http://nas.example.lan:${port}/json`)).status).toBe(200)
+    expect((await failure(resolved.fetch(`http://rebind.example.com:${port}/json`))).code).toBe('private-address')
+  })
+
+  it('checks every redirect hop against the configured hosts in unrestricted mode', async () => {
+    const nas = `nas.localhost:${port}`
+    const open = egressFor({ mode: 'unrestricted', hosts: [nas] })
+    const toOther = encodeURIComponent(`http://other.localhost:${port}/json`)
+    expect((await failure(open.fetch(`http://images.example.com:${port}/redirect-to/${toOther}`))).code).toBe(
+      'private-address',
+    )
+    const toConfigured = encodeURIComponent(`http://${nas}/json`)
+    expect((await open.fetch(`http://images.example.com:${port}/redirect-to/${toConfigured}`)).status).toBe(200)
+    // From the configured host, a redirect elsewhere on the local network is still blocked.
+    expect((await failure(open.fetch(`http://${nas}/redirect-to/${toOther}`))).code).toBe('private-address')
+  })
+
   it('re-checks policy on every redirect hop and drops credentials across origins', async () => {
     const domains = egressFor({ mode: 'domains', domains: ['api.example.com'] })
     const escape = encodeURIComponent(`http://evil.example.net:${port}/json`)

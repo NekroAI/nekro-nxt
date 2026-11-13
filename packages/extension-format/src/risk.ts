@@ -164,12 +164,16 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
         detail: asStrings(network['fields']).join('、'),
       })
     } else {
-      const purpose = network['purpose']
+      const purpose = typeof network['purpose'] === 'string' ? network['purpose'] : undefined
+      const fields = asStrings(network['fields'])
+      const detail = [purpose, fields.length === 0 ? undefined : `配置地址：${fields.join('、')}`]
+        .filter((part): part is string => part !== undefined)
+        .join('；')
       items.push({
         key: 'network',
         level: 'high',
-        label: '访问任意网站',
-        ...(typeof purpose === 'string' ? { detail: purpose } : {}),
+        label: fields.length === 0 ? '访问任意网站' : '访问任意网站和你在配置中填写的地址',
+        ...(detail === '' ? {} : { detail }),
       })
     }
   }
@@ -406,7 +410,10 @@ export const combinationFindings = (manifest: Readonly<Json>): RiskFinding[] => 
       id: 'capability.network-unrestricted',
       severity: 'warning',
       title: '网络访问不受限',
-      detail: '扩展可以访问任意网站，请确认声明的用途与源码一致。',
+      detail:
+        asStrings(network['fields']).length === 0
+          ? '扩展可以访问任意网站，请确认声明的用途与源码一致。'
+          : '扩展可以访问任意网站，以及用户在配置中填写的本机或局域网地址，请确认声明的用途与源码一致。',
     })
   }
   if (hostUi.includes('credentials.write')) {

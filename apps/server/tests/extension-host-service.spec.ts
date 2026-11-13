@@ -176,6 +176,21 @@ describe('nxt Host service', () => {
     )
     await configured.nxt.http.fetch('http://search.example.lan:8080/api/search')
     expect(configured.fetch.mock.calls[0]?.[0]).toEqual({ mode: 'config', hosts: ['search.example.lan:8080'] })
+
+    const open = fixture(
+      { network: { mode: 'unrestricted', purpose: '下载任意图片' } },
+      { baseUrl: 'http://127.0.0.1:7860' },
+    )
+    await open.nxt.http.fetch('https://cdn.example.com/a.png')
+    expect(open.fetch.mock.calls[0]?.[0]).toEqual({ mode: 'unrestricted' })
+
+    // Address fields under `unrestricted` read the same hosts as `config` mode.
+    const openWithFields = fixture(
+      { network: { mode: 'unrestricted', purpose: '下载任意图片', fields: ['baseUrl'] } },
+      { baseUrl: 'http://127.0.0.1:7860/v1' },
+    )
+    await openWithFields.nxt.http.fetch('http://127.0.0.1:7860/v1/images')
+    expect(openWithFields.fetch.mock.calls[0]?.[0]).toEqual({ mode: 'unrestricted', hosts: ['127.0.0.1:7860'] })
   })
 
   it('isolates storage by declared scope and requires a member for member scope', async () => {

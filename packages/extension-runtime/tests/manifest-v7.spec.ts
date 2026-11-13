@@ -256,6 +256,20 @@ describe('Extension Manifest V7', () => {
         ),
       ).toThrow(`permissions.${layer}.network.fields 只能引用 config.${layer} 中的文本字段`)
     }
+    // Address fields under unrestricted access follow the same rule and need level 16.
+    const unrestricted = (fields: readonly string[], sdk?: number) =>
+      extensionManifestSchema.parse(
+        hostManifest({
+          config,
+          ...(sdk === undefined ? {} : { requires: { sdk } }),
+          permissions: { agent: { network: { mode: 'unrestricted', purpose: '下载生成的图片', fields } } },
+        }),
+      )
+    expect(() => unrestricted(['agentUrl'], 16)).not.toThrow()
+    expect(() => unrestricted(['count'], 16)).toThrow(
+      'permissions.agent.network.fields 只能引用 config.agent 中的文本字段',
+    )
+    expect(() => unrestricted(['agentUrl'], 15)).toThrow('requires: { sdk: 16 }')
     expect(() =>
       extensionManifestSchema.parse(hostManifest({ permissions: { capabilities: { history: { read: true } } } })),
     ).toThrow('capabilities')

@@ -44,7 +44,7 @@ npm i -D @nekro-nxt/extension-sdk
 
 | 能力 | 做什么 | 需要声明 |
 | --- | --- | --- |
-| `http` | `http.fetch` 发网络请求，响应最大 32 MiB。已经拦截内网和云元数据地址，不要绕开它直接用全局 `fetch` | `network`（限定域名，或使用配置里的地址） |
+| `http` | `http.fetch` 发网络请求，响应最大 32 MiB。已经拦截内网和云元数据地址，不要绕开它直接用全局 `fetch` | `network`，见[网络](#网络) |
 | `secrets` | 读取配置里的凭据字段；`secrets.placeholder` 返回占位符，NekroNXT 发请求时才替换成真值 | 配置字段 `meta.role: 'secret'` |
 | `storage` | JSON 键值存储，按智能体、频道、成员或共享分区 | `storage: { scopes, quotaBytes? }` |
 | `assets` | 生成、收录和读取图片等资源 | `assets` |
@@ -80,6 +80,20 @@ npm i -D @nekro-nxt/extension-sdk
 
 社区审查会逐项判断每个权限是“必要且最小”“超出需要”还是“使用可疑”，见[发布到社区](publish.md#审查)。
 
+### 网络
+
+`network` 有三种写法：
+
+| 写法 | 能访问 |
+| --- | --- |
+| `{ mode: 'domains', domains: ['api.example.com', '*.cdn.example.com'] }` | 列出的域名 |
+| `{ mode: 'config', fields: ['baseUrl'] }` | 所列配置字段里填写的地址 |
+| `{ mode: 'unrestricted', purpose, fields? }` | 任意公网地址，启用时用户要确认风险 |
+
+本机和局域网地址一律拦截，只有一种例外：`fields` 所列配置字段里用户填写的地址，主机和端口都对上时可以访问。用户把自建服务填成 `http://127.0.0.1:7860` 或 `http://192.168.1.20:8080`，扩展能连上；智能体代填的地址不算。重定向每一跳都重新检查。
+
+既要下载任意网址、又要连用户自建服务的扩展，用 `unrestricted` 加 `fields`，需要 `requires: { sdk: 16 }`。
+
 ## 配置
 
 `config.host`（本机配置，所有智能体共用）和 `config.agent`（每个智能体一份）用 `configSchema` 描述，支持对象、字符串、数字、布尔、枚举和数组。字段可以设：
@@ -106,6 +120,7 @@ npm i -D @nekro-nxt/extension-sdk
 | 12–13 | 凭据占位符、出站钩子 | 0.7.0 |
 | 14 | 工作文件、媒体处理、命令、语音识别、工具超时和进度 | 0.8.0 |
 | 15 | `files.fromUrl` | 0.8.1 |
+| 16 | 任意网络下访问配置里的本机和局域网地址（`unrestricted` 加 `fields`） | 0.10.0 |
 
 ## 数据迁移
 

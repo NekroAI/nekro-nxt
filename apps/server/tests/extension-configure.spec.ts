@@ -9,6 +9,7 @@ import {
   AgentIdSchema,
   ChannelIdSchema,
   EpisodeIdSchema,
+  ExtensionPermissionsSchema,
   HostApiContracts,
   type AgentId,
   type ExtensionId,
@@ -19,6 +20,7 @@ import { ExtensionActionSchema, type ExtensionActor } from '../src/extension-gov
 import { ExtensionCommandPort } from '../src/extension-governance/commands.js'
 import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
 import { extensionAgentTools } from '../src/extension-governance/agent-tools.js'
+import { networkConfigFields } from '../src/extension-governance/config-service.js'
 
 const directories: string[] = []
 
@@ -642,5 +644,24 @@ describe('agents cannot widen their own reach', () => {
     } finally {
       await runtime.dispose()
     }
+  })
+})
+
+describe('network field level', () => {
+  it('treats the address fields of unrestricted network access like those of config mode', () => {
+    const permissions = (network: Record<string, unknown>) => ({
+      permissions: ExtensionPermissionsSchema.parse({ permissions: [], networkOrigins: [], agent: { network } }),
+    })
+    expect([...networkConfigFields(permissions({ mode: 'config', fields: ['baseUrl'] }), 'agent')]).toEqual(['baseUrl'])
+    expect([
+      ...networkConfigFields(
+        permissions({ mode: 'unrestricted', purpose: '下载生成的图片', fields: ['baseUrl'] }),
+        'agent',
+      ),
+    ]).toEqual(['baseUrl'])
+    expect([...networkConfigFields(permissions({ mode: 'unrestricted', purpose: '下载生成的图片' }), 'agent')]).toEqual(
+      [],
+    )
+    expect([...networkConfigFields(permissions({ mode: 'domains', domains: ['a.example.com'] }), 'agent')]).toEqual([])
   })
 })

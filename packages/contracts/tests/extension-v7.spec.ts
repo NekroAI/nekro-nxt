@@ -28,8 +28,8 @@ const config = {
 }
 
 describe('Extension V7 contracts', () => {
-  it('uses SDK level 15 and separates browser, host and agent permissions', () => {
-    expect(EXTENSION_SDK_LEVEL).toBe(15)
+  it('uses SDK level 16 and separates browser, host and agent permissions', () => {
+    expect(EXTENSION_SDK_LEVEL).toBe(16)
     // Raising the level needs the NekroNXT version that ships it, which is what users are shown.
     expect(EXTENSION_SDK_RELEASES.at(-1)?.level).toBe(EXTENSION_SDK_LEVEL)
     expect(extensionSdkVersion(10)).toBe('0.6.0')
