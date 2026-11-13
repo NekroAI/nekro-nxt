@@ -113,6 +113,7 @@ import {
   createNxtProductBackends,
   memoryNxtJobs,
   messagePartsText,
+  projectNxtMember,
   memoryNxtStorage,
   previewPlatformResult,
   sqliteNxtStorage,
@@ -946,6 +947,7 @@ export class NekroRuntime {
           const nxt = createNxtHostService(
             {
               mode: 'activation',
+              sdk: extensionServicePort.current?.revisionManifest(registered.revision)?.requires?.sdk ?? 7,
               agentId: job.agentId,
               ownerKey: registered.revision.extensionId,
               displayName: described.displayName,
@@ -1432,6 +1434,7 @@ export class NekroRuntime {
         return createNxtHostService(
           {
             mode: 'activation',
+            sdk: extensionServicePort.current?.revisionManifest(handler.revision)?.requires?.sdk ?? 7,
             agentId: handler.agentId,
             ownerKey: handler.revision.extensionId,
             displayName: described.displayName,
@@ -1515,10 +1518,9 @@ export class NekroRuntime {
         ],
         describe: (handler) => extensionHost.describeRevision(handler.revision),
         nxtFor: (handler, channelId) => attachmentNxt(handler, ChannelIdSchema.parse(channelId)),
-        message: (event, defaultTriggered) => {
+        message: (event, defaultTriggered, identities) => {
           const channel = repository.getChannel(event.channelId)
-          const senderId = event.senderMemberId
-          const senderName = senderId === undefined ? undefined : repository.getChannelMember(senderId)?.displayName
+          const sender = projectNxtMember(nxtFacts, event.channelId, event.senderMemberId, identities)
           return {
             logicalMessageId: event.logicalMessageId,
             channel: {
@@ -1526,9 +1528,7 @@ export class NekroRuntime {
               kind: channel?.kind ?? 'group',
               ...(channel?.displayName === undefined ? {} : { displayName: channel.displayName }),
             },
-            ...(senderId === undefined
-              ? {}
-              : { sender: { memberId: senderId, ...(senderName === undefined ? {} : { displayName: senderName }) } }),
+            ...(sender === undefined ? {} : { sender }),
             text: messagePartsText(nxtFacts, event.parts),
             images: event.parts.flatMap((part) =>
               part.type === 'image' ? [{ assetId: part.assetId, sticker: part.sticker === true }] : [],

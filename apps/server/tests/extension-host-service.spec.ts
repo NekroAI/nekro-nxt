@@ -1,13 +1,37 @@
 import { describe, expect, it, vi } from 'vitest'
-import { configSchema, CredentialIdSchema, type ExtensionCapabilities, type JsonValue } from '@nekro-nxt/contracts'
-import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
-import type { NxtCallContext, NxtPromptRenderApi } from '@nekro-nxt/extension-sdk'
 import {
+  AgentIdSchema,
+  ChannelEventIdSchema,
+  ChannelIdSchema,
+  configSchema,
+  CredentialIdSchema,
+  ExtensionCapabilitiesSchema,
+  ExtensionIdSchema,
+  ExtensionRevisionIdSchema,
+  LogicalMessageIdSchema,
+  type ChannelEventId,
+  type ChannelId,
+  type ExtensionCapabilities,
+  type JsonValue,
+} from '@nekro-nxt/contracts'
+import {
+  CoreService,
+  type BindingRecord,
+  type ChannelEventRecord,
+  type ChannelMemberRecord,
+  type ChannelRecord,
+} from '@nekro-nxt/core'
+import { extensionManifestSchema } from '@nekro-nxt/extension-runtime'
+import type { NxtCallContext, NxtInboundHandler, NxtInboundMessage, NxtPromptRenderApi } from '@nekro-nxt/extension-sdk'
+import { openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
+import {
+  createNxtProductBackends,
   memoryNxtJobs,
   memoryNxtStorage,
   resolveExtensionSecret,
   type NamedCredentialResolver,
   type NamedCredentialUse,
+  type NxtProductFacts,
 } from '../src/extension-host-backends.js'
 import {
   createNxtHostService,
@@ -19,6 +43,8 @@ import {
 import { memoryIndexEngine } from '../src/extension-index.js'
 import { emptyExtensionLibrary, unusedNxtBackends, unusedMediaBackends } from './fixtures/unused-nxt-backends.js'
 import { commitExtensionConfigWithSecrets, maskExtensionSecrets } from '../src/extension-secret-config.js'
+import { ExtensionInboundHookGate, memoryInboundHookDecisionStore } from '../src/extension-inbound-hooks.js'
+import type { PersistentInboundHandler } from '../src/persistent-extension-mounts.js'
 
 const callContext: NxtCallContext = {
   agent: { id: 'agt_FIXTURE', name: '示例智能体' },
@@ -575,5 +601,398 @@ describe.each(['host', 'agent'] as const)('extension %s secret configuration', (
         commit: (config) => Promise.resolve(config),
       }),
     ).rejects.toThrow('已不存在')
+  })
+})
+
+const agentId = AgentIdSchema.parse('agt_INBOUNDIDENTITY')
+const channelId = ChannelIdSchema.parse('chn_INBOUNDIDENTITY')
+const binding: BindingRecord = {
+  channelId,
+  agentId,
+  triggerPolicy: 'always',
+  paused: false,
+  processingFeedback: 'auto',
+  localAgentMessages: 'observe',
+  activityTriggerOverrides: {},
+  responseTiming: {},
+  boundAt: 1,
+}
+const event: ChannelEventRecord = {
+  id: ChannelEventIdSchema.parse('evt_INBOUNDIDENTITY'),
+  logicalMessageId: LogicalMessageIdSchema.parse('msg_INBOUNDIDENTITY'),
+  channelId,
+  kind: 'message-created',
+  parts: [{ type: 'text', text: '示例消息' }],
+  sourceTimestamp: 2,
+  receivedAt: 2,
+  dedupeKey: 'inbound-identity-fixture',
+  searchText: '示例消息',
+}
+const hook = { reads: 'all', mayHide: false, mayForceTrigger: false, timeoutMs: 1000 } as const
+
+const handler = (name: string, run: NxtInboundHandler): PersistentInboundHandler => ({
+  agentId,
+  revision: {
+    id: ExtensionRevisionIdSchema.parse(`xrv_${name}`),
+    extensionId: ExtensionIdSchema.parse(`ext_${name}`),
+    revisionNumber: 1,
+    contentDigest: 'a'.repeat(64),
+    payloadDigest: 'b'.repeat(64),
+    createdAt: 1,
+    ancestry: [],
+    origin: 'file',
+    dataVersion: 1,
+  },
+  config: {},
+  hostConfig: {},
+  handler: run,
+})
+
+const projection = (_event: ChannelEventRecord, defaultTriggered: boolean, identities: boolean): NxtInboundMessage => ({
+  logicalMessageId: event.logicalMessageId,
+  channel: { id: channelId, kind: 'group', displayName: '示例频道' },
+  sender: {
+    memberId: 'mem_INBOUNDIDENTITY',
+    displayName: '示例成员',
+    ...(identities ? { identityId: 'pid_INBOUNDIDENTITY', platformUserId: 'example-account' } : {}),
+  },
+  text: '示例消息',
+  images: [],
+  mentionsAgent: false,
+  wouldTrigger: defaultTriggered,
+  receivedAt: event.receivedAt,
+})
+
+const gate = (
+  handlers: readonly PersistentInboundHandler[],
+  capabilities: ReadonlyMap<string, ExtensionCapabilities>,
+  message: typeof projection,
+) =>
+  new ExtensionInboundHookGate({
+    handlers: () => handlers,
+    describe: ({ revision }) => ({
+      displayName: revision.extensionId,
+      capabilities: capabilities.get(revision.extensionId),
+    }),
+    nxtFor: ({ revision }) =>
+      createNxtHostService(
+        {
+          mode: 'activation',
+          sdk: 16,
+          agentId,
+          channelId,
+          ownerKey: revision.extensionId,
+          displayName: revision.extensionId,
+          capabilities: () => capabilities.get(revision.extensionId),
+          config: () => ({}),
+          declaredSecrets: () => ({ config: [], hostConfig: [] }),
+        },
+        unusedNxtBackends(),
+      ),
+    message,
+    store: memoryInboundHookDecisionStore(),
+    now: () => 3,
+  })
+
+describe('inbound member identity projections', () => {
+  it.each(['authorized-first', 'authorized-last'] as const)(
+    'isolates each handler declaration and message mutations with %s (#156)',
+    async (order) => {
+      const received = new Map<string, NxtInboundMessage>()
+      const snapshots = new Map<string, NxtInboundMessage>()
+      const authorized = handler('IDENTITYALLOWED', (message) => {
+        received.set('authorized', message)
+        snapshots.set('authorized', structuredClone(message))
+        Object.assign(message.sender!, {
+          displayName: '被修改的成员',
+          identityId: 'pid_MUTATED',
+          platformUserId: 'modified-account',
+        })
+        Object.assign(message, { text: '被修改的消息' })
+        return undefined
+      })
+      const ordinary = handler('IDENTITYORDINARY', (message) => {
+        received.set('ordinary', message)
+        snapshots.set('ordinary', structuredClone(message))
+        return undefined
+      })
+      const capabilities = new Map([
+        [
+          authorized.revision.extensionId,
+          ExtensionCapabilitiesSchema.parse({ inboundHook: hook, members: { identities: true } }),
+        ],
+        [ordinary.revision.extensionId, ExtensionCapabilitiesSchema.parse({ inboundHook: hook })],
+      ])
+      const message = vi.fn(projection)
+      const handlers = order === 'authorized-first' ? [authorized, ordinary] : [ordinary, authorized]
+
+      await expect(
+        gate(handlers, capabilities, message).decide({ binding, event, defaultTriggered: true }),
+      ).resolves.toEqual({
+        trigger: 'default',
+        hidden: false,
+      })
+
+      expect(message.mock.calls.map((call) => call[2])).toEqual(
+        order === 'authorized-first' ? [true, false] : [false, true],
+      )
+      expect(snapshots.get('authorized')?.sender).toEqual({
+        memberId: 'mem_INBOUNDIDENTITY',
+        displayName: '示例成员',
+        identityId: 'pid_INBOUNDIDENTITY',
+        platformUserId: 'example-account',
+      })
+      expect(snapshots.get('ordinary')?.sender).toEqual({ memberId: 'mem_INBOUNDIDENTITY', displayName: '示例成员' })
+      expect(received.get('ordinary')).toEqual(snapshots.get('ordinary'))
+      expect(received.get('ordinary')?.text).toBe('示例消息')
+      expect(received.get('ordinary')).not.toBe(received.get('authorized'))
+      expect(received.get('ordinary')?.sender).not.toBe(received.get('authorized')?.sender)
+    },
+  )
+
+  it('does not project or invoke a handler without an inbound hook declaration', async () => {
+    const run = vi.fn<NxtInboundHandler>()
+    const undeclared = handler('IDENTITYUNDECLARED', run)
+    const message = vi.fn(projection)
+    const capabilities = new Map([
+      [undeclared.revision.extensionId, ExtensionCapabilitiesSchema.parse({ members: { identities: true } })],
+    ])
+
+    await gate([undeclared], capabilities, message).decide({ binding, event, defaultTriggered: true })
+
+    expect(run).not.toHaveBeenCalled()
+    expect(message).not.toHaveBeenCalled()
+  })
+})
+
+const createMemberIdentityFixture = async () => {
+  const database = await openMigratedCoreDatabase(':memory:')
+  const repository = new SqliteCoreRepository(database)
+  let sequence = 0
+  const core = new CoreService(repository, { now: () => 100 + sequence, nextUlid: () => `IDENTITY${++sequence}` })
+  const connection = core.createConnection({ adapterKey: 'fixture-identity', config: {} })
+  const otherConnection = core.createConnection({ adapterKey: 'fixture-identity', config: {} })
+  const firstChannel = core.createChannel({
+    connectionId: connection.id,
+    platformChannelId: 'example-first',
+    kind: 'group',
+    displayName: '示例频道甲',
+  })
+  const secondChannel = core.createChannel({
+    connectionId: connection.id,
+    platformChannelId: 'example-second',
+    kind: 'group',
+    displayName: '示例频道乙',
+  })
+  const foreignChannel = core.createChannel({
+    connectionId: otherConnection.id,
+    platformChannelId: 'example-foreign',
+    kind: 'group',
+  })
+  const observe = (channel: ChannelRecord, platformUserId: string, displayName: string) =>
+    core.observeChannelMember({
+      connectionId: channel.connectionId,
+      channelId: channel.id,
+      platformUserId,
+      displayName,
+      observedAt: 150,
+    }).member
+  const firstMember = observe(firstChannel, 'example-member', '示例成员甲')
+  const secondMember = observe(secondChannel, 'example-member', '示例成员甲')
+  const foreignMember = observe(foreignChannel, 'example-member', '示例成员甲')
+  const latestMember = observe(firstChannel, 'example-later-member', '示例成员乙')
+  const selfMember = core.ensureSelfChannelMember(firstChannel.id)
+  let eventSequence = 0
+  const append = (channel: ChannelRecord, sender: ChannelMemberRecord, text: string) => {
+    eventSequence += 1
+    return core.appendInbound({
+      connectionId: channel.connectionId,
+      channelId: channel.id,
+      adapterKey: 'fixture-identity',
+      kind: 'message-created',
+      senderMemberId: sender.id,
+      parts: [{ type: 'text', text }],
+      platformTimestamp: 200 + eventSequence,
+      receivedAt: 200 + eventSequence,
+      dedupeKey: `identity-event-${eventSequence}`,
+    }).event
+  }
+  const trigger = append(firstChannel, firstMember, '示例唤醒消息')
+  const latest = append(firstChannel, latestMember, '示例后续消息')
+  const secondTrigger = append(secondChannel, secondMember, '示例另一频道消息')
+  const foreignTrigger = append(foreignChannel, foreignMember, '示例其他连接消息')
+  const triggers = new Map<string, ChannelEventId>([
+    [firstChannel.id, trigger.id],
+    [secondChannel.id, secondTrigger.id],
+    [foreignChannel.id, foreignTrigger.id],
+  ])
+  const infrastructure = unusedNxtBackends()
+  const facts: NxtProductFacts = {
+    history: repository,
+    getConnectionName: () => '示例连接',
+    getAgentName: () => '示例智能体',
+    createAsset: infrastructure.createAsset,
+    resolveCredential: () => Promise.reject(new Error('Unexpected credential lookup.')),
+    turnTrigger: (episodeId) => {
+      const eventId = triggers.get(episodeId)
+      const event = eventId === undefined ? undefined : repository.getChannelEvent(eventId)
+      return event?.senderMemberId === undefined
+        ? undefined
+        : { event, senderMemberId: event.senderMemberId, requester: { kind: 'member', memberId: event.senderMemberId } }
+    },
+    members: {
+      describe: (memberId) => {
+        const record = repository.getChannelMember(memberId)
+        return record !== undefined && repository.getPlatformIdentity(record.platformIdentityId)?.self !== undefined
+          ? { kind: 'self' }
+          : { kind: 'member' }
+      },
+      self: (id) => ({ memberId: core.ensureSelfChannelMember(id).id }),
+      localAgents: () => [],
+    },
+  }
+  const backends = createNxtProductBackends(facts, infrastructure)
+  const service = (
+    options: {
+      readonly mode?: 'activation' | 'dynamic'
+      readonly sdk?: number
+      readonly identities?: boolean
+      readonly channelId?: ChannelId
+    } = {},
+  ) =>
+    createNxtHostService(
+      {
+        mode: options.mode ?? 'activation',
+        sdk: options.sdk ?? 16,
+        agentId: 'agt_IDENTITYFIXTURE',
+        ownerKey: 'ext_IDENTITYFIXTURE',
+        displayName: '示例扩展',
+        channelId: options.channelId ?? firstChannel.id,
+        episodeId: () => options.channelId ?? firstChannel.id,
+        capabilities: () =>
+          ExtensionCapabilitiesSchema.parse({
+            history: { read: true },
+            ...(options.identities === true ? { members: { identities: true } } : {}),
+          }),
+        config: () => ({}),
+        declaredSecrets: () => ({ config: [], hostConfig: [] }),
+      },
+      backends,
+    )
+  return {
+    database,
+    repository,
+    service,
+    append,
+    triggers,
+    firstChannel,
+    secondChannel,
+    foreignChannel,
+    firstMember,
+    secondMember,
+    foreignMember,
+    latestMember,
+    selfMember,
+    trigger,
+    latest,
+    foreignTrigger,
+  }
+}
+
+describe('member identities across nxt product surfaces', () => {
+  it.each([
+    ['SDK 16 with permission', 'activation', 16, true, true],
+    ['SDK 16 without permission', 'activation', 16, false, false],
+    ['SDK 15 with permission', 'activation', 15, true, false],
+    ['SDK 15 without permission', 'activation', 15, false, false],
+    ['dynamic with identity declaration before activation approval', 'dynamic', 16, true, false],
+    ['dynamic without permission', 'dynamic', 16, false, false],
+  ] as const)('projects every surface for %s (#156)', async (_name, mode, sdk, identities, allowed) => {
+    const f = await createMemberIdentityFixture()
+    try {
+      const nxt = f.service({ mode, sdk, identities })
+      const expectedSender = (record: ChannelMemberRecord) => ({
+        memberId: record.id,
+        displayName: record.displayName,
+        ...(allowed
+          ? {
+              identityId: record.platformIdentityId,
+              platformUserId: f.repository.getPlatformIdentity(record.platformIdentityId)?.platformUserId,
+            }
+          : {}),
+      })
+      const context = await nxt.context.current()
+      expect(context.latestInbound).toEqual({
+        logicalMessageId: f.latest.logicalMessageId,
+        sender: expectedSender(f.latestMember),
+        text: '示例后续消息',
+        receivedAt: f.latest.receivedAt,
+      })
+      expect(context.trigger).toEqual({
+        kind: 'message',
+        sender: expectedSender(f.firstMember),
+        message: {
+          logicalMessageId: f.trigger.logicalMessageId,
+          text: '示例唤醒消息',
+          receivedAt: f.trigger.receivedAt,
+        },
+        administrator: false,
+      })
+      expect(await nxt.members.describe(f.firstMember.id)).toEqual(expectedSender(f.firstMember))
+      const listed = await nxt.history.list()
+      const searched = await nxt.history.search('示例')
+      for (const messages of [listed.messages, searched]) {
+        expect(messages.map(({ logicalMessageId }) => logicalMessageId)).toEqual([
+          f.latest.logicalMessageId,
+          f.trigger.logicalMessageId,
+        ])
+        expect(messages[0]?.sender).toEqual(expectedSender(f.latestMember))
+        expect(messages[1]?.sender).toEqual(expectedSender(f.firstMember))
+      }
+    } finally {
+      f.database.close()
+    }
+  })
+
+  it('reuses identity only across channels of one connection and refuses foreign channel members', async () => {
+    const f = await createMemberIdentityFixture()
+    try {
+      const first = f.service({ identities: true })
+      const second = f.service({ identities: true, channelId: f.secondChannel.id })
+      const foreign = f.service({ identities: true, channelId: f.foreignChannel.id })
+      const firstPerson = await first.members.describe(f.firstMember.id)
+      const secondPerson = await second.members.describe(f.secondMember.id)
+      const foreignPerson = await foreign.members.describe(f.foreignMember.id)
+      expect(firstPerson?.identityId).toBeDefined()
+      expect(secondPerson?.identityId).toBe(firstPerson?.identityId)
+      expect(secondPerson?.memberId).not.toBe(firstPerson?.memberId)
+      expect(foreignPerson?.identityId).not.toBe(firstPerson?.identityId)
+      expect(foreignPerson?.platformUserId).toBe(firstPerson?.platformUserId)
+      await expect(first.members.describe(f.secondMember.id)).resolves.toBeUndefined()
+      await expect(first.members.describe(f.foreignMember.id)).resolves.toBeUndefined()
+      f.triggers.set(f.firstChannel.id, f.foreignTrigger.id)
+      expect((await first.context.current()).trigger).toBeUndefined()
+    } finally {
+      f.database.close()
+    }
+  })
+
+  it('keeps the self placeholder account and identity out of every surface even with permission', async () => {
+    const f = await createMemberIdentityFixture()
+    try {
+      const selfEvent = f.append(f.firstChannel, f.selfMember, '示例自身消息')
+      f.triggers.set(f.firstChannel.id, selfEvent.id)
+      const nxt = f.service({ identities: true })
+      const expected = { memberId: f.selfMember.id, self: true }
+      expect(f.repository.getPlatformIdentity(f.selfMember.platformIdentityId)?.platformUserId).toBe('nxt:self')
+      await expect(nxt.members.describe(f.selfMember.id)).resolves.toEqual(expected)
+      const context = await nxt.context.current()
+      expect(context.trigger?.sender).toEqual(expected)
+      expect(context.latestInbound?.sender).toEqual(expected)
+      expect((await nxt.history.list()).messages[0]?.sender).toEqual(expected)
+      expect((await nxt.history.search('示例自身消息'))[0]?.sender).toEqual(expected)
+    } finally {
+      f.database.close()
+    }
   })
 })

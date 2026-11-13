@@ -41,7 +41,7 @@ export interface ExtensionInboundHookGateOptions {
   }
   /** `nxt` bound to the message's channel for one handler; no prompt registration. */
   readonly nxtFor: (handler: PersistentInboundHandler, channelId: string) => NxtHostService
-  readonly message: (event: ChannelEventRecord, defaultTriggered: boolean) => NxtInboundMessage
+  readonly message: (event: ChannelEventRecord, defaultTriggered: boolean, identities: boolean) => NxtInboundMessage
   readonly store: InboundHookDecisionStore
   readonly now: () => number
   readonly diagnostic?: (extensionId: string, message: string) => void
@@ -111,7 +111,6 @@ export class ExtensionInboundHookGate implements InboundHookGate {
         .map((annotator) => annotator.annotate(input).catch((): readonly InboundAnnotation[] => [])),
     ).then((notes) => notes.flat())
     const handlers = this.#options.handlers(input.binding.agentId)
-    let message: NxtInboundMessage | undefined
     const decidedBy: string[] = []
     const diagnostics: { extensionId: string; message: string }[] = []
     let trigger: InboundHookDecision['trigger'] = 'default'
@@ -128,7 +127,7 @@ export class ExtensionInboundHookGate implements InboundHookGate {
         answer = await timeout(
           Promise.resolve(
             handler.handler(
-              (message ??= this.#options.message(input.event, input.defaultTriggered)),
+              this.#options.message(input.event, input.defaultTriggered, capabilities?.members?.identities === true),
               this.#options.nxtFor(handler, input.event.channelId),
             ),
           ),

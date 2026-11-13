@@ -11,6 +11,7 @@ import {
   type ExtensionCapabilities,
   EXTENSION_OUTBOUND_SDK_LEVEL,
   EXTENSION_FILES_SDK_LEVEL,
+  EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL,
   ExtensionPermissionsSchema,
   outboundProcessesBeforeSend,
   requiredExtensionSdkLevel,
@@ -547,6 +548,51 @@ describe('work files, asset reads and high-detail tool images', () => {
       requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ host: { assets: { library: {} } } })).level,
     ).toBe(8)
     expect(EXTENSION_FILES_SDK_LEVEL).toBe(14)
+  })
+})
+
+describe('member identities', () => {
+  it('requires an explicit agent-layer declaration', () => {
+    expect(caps({ members: { identities: true } }).members).toEqual({ identities: true })
+    for (const members of [{}, { identities: false }, { identities: true, read: true }]) {
+      expect(ExtensionCapabilitiesSchema.safeParse({ members }).success).toBe(false)
+    }
+    expect(ExtensionPermissionsSchema.safeParse({ host: { members: { identities: true } } }).success).toBe(false)
+  })
+
+  it.each([
+    ['adding identities', {}, { members: { identities: true } }, true],
+    ['keeping identities', { members: { identities: true } }, { members: { identities: true } }, false],
+    ['removing identities', { members: { identities: true } }, {}, false],
+  ])('approval covers %s', (_name, previous, next, expands) => {
+    expect(extensionCapabilitiesExpand(caps(previous), caps(next))).toBe(expands)
+  })
+
+  it('shows the account access and same-connection association on approval', () => {
+    expect(summarizeExtensionCapabilities(caps({ members: { identities: true } }))).toEqual([
+      {
+        key: 'members.identities',
+        risk: 'sensitive',
+        label: '读取成员的平台账号和身份',
+        detail: '可关联同一连接的不同频道中的成员',
+      },
+    ])
+  })
+
+  it('needs SDK level 16 even when older capabilities are also declared', () => {
+    expect(EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL).toBe(16)
+    for (const agent of [
+      { members: { identities: true } },
+      { members: { identities: true }, files: {}, outbound: { read: true, timeoutMs: 1000 } },
+    ]) {
+      expect(requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ agent }))).toEqual({
+        level: EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL,
+        capabilities: ['成员身份'],
+      })
+    }
+    expect(
+      requiredExtensionSdkLevel(ExtensionPermissionsSchema.parse({ agent: { history: { read: true } } })).level,
+    ).toBeLessThan(EXTENSION_MEMBER_IDENTITIES_SDK_LEVEL)
   })
 })
 

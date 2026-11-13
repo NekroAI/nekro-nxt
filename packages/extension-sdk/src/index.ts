@@ -569,6 +569,10 @@ export interface NxtStorageEntry {
 export interface NxtMemberSummary {
   readonly memberId: string
   readonly displayName?: string
+  /** SDK 16, with `members.identities`: stable across channels of the same connection. */
+  readonly identityId?: string
+  /** SDK 16, with `members.identities`: the Adapter-reported account id; not a global identity. */
+  readonly platformUserId?: string
   /** The channel's own account, i.e. the agent itself. */
   readonly self?: true
   /** The account of another agent on this host that answers the same platform channel. */
@@ -893,7 +897,7 @@ export interface NxtHostService {
     current(): Promise<NxtCallContext>
   }
   readonly members: {
-    /** Who a member of the current channel is (the agent itself, another local agent, or a member); no capability. */
+    /** Current-channel member; account identities require SDK 16 and `permissions.agent.members.identities`. */
     describe(memberId: string): Promise<NxtMemberSummary | undefined>
   }
   readonly history: {
@@ -1758,7 +1762,7 @@ const HOST_SERVICES_BY_TOPIC = {
   ],
   context: [
     'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text }, trigger?: { kind, sender?, message?, administrator } }：当前智能体、频道、最近一条入站消息和这一轮的触发者；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。群里消息多时 latestInbound 可能是别人发的，要知道这一轮在回应谁就读 trigger.sender；trigger.administrator 表示发起者是 NekroNXT 管理员。判断身份只看 trigger，不要用工具参数里的 memberId，那是模型自己填的，对话内容能诱导它。智能体自己醒来（定时任务、后台作业）时没有 trigger。',
-    'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
+    'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent?, identityId?, platformUserId? } | undefined：读取当前频道成员摘要；基础摘要不需要权限。保存扩展，声明并获准 members: { identities: true } 后，上下文、成员查询、历史消息和入站钩子的 sender 才包含 identityId、platformUserId；试运行和拿不到真实账号时缺省。需要 requires: { sdk: 16 }。',
     'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
     "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
     "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",
@@ -1798,7 +1802,7 @@ const HOST_RULES_BY_TOPIC = {
     '不要声明 permissions.agent.mcp：MCP 服务只能由用户在工坊用「添加 MCP 服务」连接，动态创造声明 mcp 会被拒绝；用户想接入某个 MCP 服务时，告诉他去工坊添加。',
   ],
   context: [
-    'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().trigger.sender、history 消息的 sender 或入站钩子的 message.sender；不要用平台账号或昵称作为存储键。',
+    'memberId 是频道成员 ID（形如 mbr_ 开头），来自 context.current().trigger.sender、history 消息的 sender 或入站钩子的 message.sender，用于 member 存储分区。identityId 在同一连接的不同频道中稳定；跨频道成员数据可在 agent 或 shared 分区用它作键。不同连接或平台之间没有身份一致性保证，platformUserId 和昵称不能代替 identityId。',
     'channel.kind 取值为 internal（内置频道）、direct（私聊）或 group（群聊）；平台动作通常只在 direct 或 group 中可用，先用 platform.actions() 确认。',
     'history.list 每次返回 { messages, next }，messages 按时间从新到旧；要继续向前翻页，把 next 原样作为 before 传入。',
     '静态说明只能是固定字符串，只在版本或配置切换时变化；会变化的状态放进 dynamic，宿主每轮开始渲染一次，内容不变就不会追加新的上下文。',
