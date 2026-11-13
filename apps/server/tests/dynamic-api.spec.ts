@@ -549,28 +549,29 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
         context.llm.registerAdapter(['test-provider'], model)
       },
     })
-    await runtime.start()
-    const entity = await runtime.createAgentWithInternalChannel({
-      displayName: '创造智能体',
-      persona: '',
-      model: { provider: 'test-provider', model: 'chat-model' },
-      capabilities: { dynamicCreation: true },
-    })
-    await runtime.internalChannel.postMessage({
-      channelId: entity.channelId,
-      clientEventId: 'seed-session',
-      parts: [{ type: 'text', text: '建立活动会话。' }],
-    })
-    const episode = runtime.repository
-      .listActiveEpisodesForAgent(entity.agentId)
-      .find((candidate) => candidate.dshSessionId !== undefined)
-    const dshSessionId = episode!.dshSessionId!
-    const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
-      plugin: { kind: 'new', idPrefix: 'nochk' },
-      name: '无人检查的客户端',
-      purpose: '验证浏览器审批。',
-      code: {
-        host: `return {
+    try {
+      await runtime.start()
+      const entity = await runtime.createAgentWithInternalChannel({
+        displayName: '创造智能体',
+        persona: '',
+        model: { provider: 'test-provider', model: 'chat-model' },
+        capabilities: { dynamicCreation: true },
+      })
+      await runtime.internalChannel.postMessage({
+        channelId: entity.channelId,
+        clientEventId: 'seed-session',
+        parts: [{ type: 'text', text: '建立活动会话。' }],
+      })
+      const episode = runtime.repository
+        .listActiveEpisodesForAgent(entity.agentId)
+        .find((candidate) => candidate.dshSessionId !== undefined)
+      const dshSessionId = episode!.dshSessionId!
+      const defined = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
+        plugin: { kind: 'new', idPrefix: 'nochk' },
+        name: '无人检查的客户端',
+        purpose: '验证浏览器审批。',
+        code: {
+          host: `return {
           inject: ['tools'],
           apply(ctx) {
             const tool = harness.defineTool({
@@ -586,7 +587,7 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
             harness.registerTool(ctx, tool)
           }
         }`,
-        client: `return {
+          client: `return {
           inject: ['panels'],
           apply(ctx) {
             ctx.panels.register(
@@ -595,35 +596,36 @@ describe('NekroNxt domain API — browser dynamic client circuit', () => {
             )
           }
         }`,
-      },
-      resources: {},
-      // A V7 candidate also declares agent-layer capabilities; the preview only receives the page layer.
-      permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
-      contributions: [],
-    })
-    void runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run')
-    await expect.poll(() => runtime.repository.listAuthoringTasks(entity.agentId)[0]?.status).toBe('awaiting-approval')
-    const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
-    try {
+        },
+        resources: {},
+        // A V7 candidate also declares agent-layer capabilities; the preview only receives the page layer.
+        permissions: { permissions: [], networkOrigins: [], agent: { history: { read: true } } },
+        contributions: [],
+      })
+      // Running awaits the definition's durable commit and records its approval state before returning.
+      await expect(
+        runtime.host.runDynamicPackage(dshSessionId, defined.pluginId, defined.packageId, 'run'),
+      ).resolves.toMatchObject({ ok: true, status: 'awaiting-approval' })
+      const task = runtime.repository.listAuthoringTasks(entity.agentId)[0]!
+      expect(task.status).toBe('awaiting-approval')
       await runtime.host.runWaitingCandidateWithoutClient(task.id)
       const ready = runtime.repository.getAuthoringTask(task.id)
-      expect(ready?.status).toBe('ready')
+      expect(ready?.status, JSON.stringify(runtime.repository.listAuthoringAttempts(task.id))).toBe('ready')
       const attempt = runtime.repository.listAuthoringAttempts(task.id).at(-1)!
       expect(attempt.state).toBe('active')
       expect(attempt.verification).toMatchObject({ hostStarted: true, clientLoaded: false, clientSkipped: true })
       expect(projectAuthoringAttempt(attempt)).toMatchObject({ uiUnverified: true })
       // The agent hears the result like after any other run.
-      await expect
-        .poll(() =>
-          model.requests.some((request) =>
-            request.messages.some(
-              (message) =>
-                message.role === 'user' &&
-                message.content.some((block) => block.type === 'text' && block.text.includes('〔系统通知〕')),
-            ),
+      await runtime.host.whenAuthoringSettled(dshSessionId)
+      expect(
+        model.requests.some((request) =>
+          request.messages.some(
+            (message) =>
+              message.role === 'user' &&
+              message.content.some((block) => block.type === 'text' && block.text.includes('〔系统通知〕')),
           ),
-        )
-        .toBe(true)
+        ),
+      ).toBe(true)
     } finally {
       await runtime.dispose()
     }
