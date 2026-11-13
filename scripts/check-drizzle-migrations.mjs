@@ -11,7 +11,7 @@ const writeBaseline = (root, file, value) => writeFile(path.join(root, file), JS
 const root = process.cwd()
 const packageRoot = path.join(root, 'packages/storage-sqlite')
 const migrationsRoot = path.join(packageRoot, 'migrations')
-const schemaPath = path.join(packageRoot, 'src/schema.ts')
+const schemaPath = path.join(packageRoot, 'src/schema.ts').split(path.sep).join('/')
 const baselinePath = 'scripts/baselines/drizzle-migrations.json'
 
 async function filesBelow(directory, prefix = '') {
@@ -34,6 +34,8 @@ async function hashes(directory) {
 }
 
 async function generate(out, name) {
+  const pnpmCli = process.env['npm_execpath']
+  if (!pnpmCli) throw new Error('Drizzle 迁移检查请通过 pnpm script 启动。')
   const arguments_ = [
     '--dir',
     'packages/storage-sqlite',
@@ -50,7 +52,11 @@ async function generate(out, name) {
     name,
   ]
   await new Promise((resolve, reject) => {
-    const child = spawn('pnpm', arguments_, { cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(process.execPath, [pnpmCli, ...arguments_], {
+      cwd: root,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let output = ''
     child.stdout.on('data', (chunk) => (output += String(chunk)))
     child.stderr.on('data', (chunk) => (output += String(chunk)))
