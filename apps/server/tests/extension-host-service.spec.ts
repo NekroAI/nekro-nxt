@@ -833,8 +833,9 @@ const createMemberIdentityFixture = async () => {
     getAgentName: () => '示例智能体',
     createAsset: infrastructure.createAsset,
     resolveCredential: () => Promise.reject(new Error('Unexpected credential lookup.')),
-    turnTrigger: (episodeId) => {
-      const eventId = triggers.get(episodeId)
+    turnTrigger: (source: string | { readonly channelId: string }) => {
+      const channelId = typeof source === 'string' ? source : source.channelId
+      const eventId = triggers.get(channelId)
       const event = eventId === undefined ? undefined : repository.getChannelEvent(eventId)
       return event?.senderMemberId === undefined
         ? undefined
