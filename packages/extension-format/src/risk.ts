@@ -131,6 +131,7 @@ const KNOWN_CAPABILITIES = new Set([
   'speech',
   'index',
   'history',
+  'members',
   'inboundHook',
   'outbound',
   'jobs',
@@ -240,6 +241,9 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
   }
   if (asObject(capabilities['history']) !== undefined) {
     items.push({ key: 'history', level: 'high', label: '读取当前频道的聊天记录' })
+  }
+  if (asObject(capabilities['members'])?.['identities'] === true) {
+    items.push({ key: 'members.identities', level: 'high', label: '读取成员的平台账号和身份' })
   }
   const hook = asObject(capabilities['inboundHook'])
   if (hook !== undefined) {
@@ -360,6 +364,14 @@ export const combinationFindings = (manifest: Readonly<Json>): RiskFinding[] => 
   const network = asObject(capabilities['network'])
   const hasNetwork = network !== undefined || hostUi.includes('network.request')
   const hook = asObject(capabilities['inboundHook'])
+  if (asObject(capabilities['members'])?.['identities'] === true && hasNetwork) {
+    findings.push({
+      id: 'combo.identities-network',
+      severity: 'risk',
+      title: '可外传成员账号',
+      detail: '扩展可以读取成员的平台账号并访问网络，请确认账号信息的用途。',
+    })
+  }
   if (asObject(capabilities['history']) !== undefined && hasNetwork) {
     findings.push({
       id: 'combo.history-network',

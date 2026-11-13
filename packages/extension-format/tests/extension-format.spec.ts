@@ -45,6 +45,22 @@ it('requires SDK 9 and a host entry for agent command contributions', () => {
   ).toBe(false)
 })
 
+it('requires SDK 16 for declared member identities (#156)', () => {
+  const identityManifest = manifest({
+    requires: { sdk: 16 },
+    permissions: { agent: { members: { identities: true } } },
+  })
+  expect(extensionManifestSchema.parse(identityManifest).permissions.agent?.members).toEqual({ identities: true })
+  expect(extensionManifestSchema.safeParse({ ...identityManifest, requires: { sdk: 15 } }).success).toBe(false)
+  expect(extensionManifestSchema.safeParse({ ...identityManifest, requires: undefined }).success).toBe(false)
+  expect(
+    extensionManifestSchema.safeParse({
+      ...identityManifest,
+      permissions: { host: { members: { identities: true } } },
+    }).success,
+  ).toBe(false)
+})
+
 const buildPackage = (
   options: {
     readonly manifest?: Record<string, unknown>

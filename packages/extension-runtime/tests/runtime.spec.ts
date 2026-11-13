@@ -1259,7 +1259,7 @@ describe('Extension save', () => {
     expect(manifest.revisionId).toBe(saved.revision.id)
     expect(manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 15 },
+      requires: { sdk: 16 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: saved.extension.id,
       revisionId: saved.revision.id,
@@ -1729,7 +1729,7 @@ describe('Extension materialization and build policy', () => {
     expect(first.sources.host).toContain("from '@nekro-nxt/extension-sdk'")
     expect(first.manifest).toEqual({
       schemaVersion: 7,
-      requires: { sdk: 15 },
+      requires: { sdk: 16 },
       permissions: { permissions: [], networkOrigins: [] },
       extensionId: extensionId('test'),
       revisionId: revisionId('test'),
@@ -2088,12 +2088,14 @@ const lifecycleManifest = (
     readonly permissions?: Record<string, unknown>
     readonly adapterKey?: string
     readonly agentLayer?: boolean
+    readonly sdk?: number
   } = {},
 ): ExtensionManifest =>
   extensionManifestSchema.parse({
     schemaVersion: 7,
     extensionId: item.extensionId,
     revisionId: item.id,
+    ...(extra.sdk === undefined ? {} : { requires: { sdk: extra.sdk } }),
     entrypoints: { host: 'source/host.ts' },
     permissions: { permissions: [], networkOrigins: [], ...extra.permissions },
     config: {
@@ -2319,6 +2321,46 @@ describe('Extension lifecycle', () => {
     )
     expect(coordinator.getTransition(one, extension.id)).toBeUndefined()
     expect(coordinator.agentRequirement(one, extension.id, first.id).approvalRequired).toBe(false)
+  })
+
+  it('blocks identity-only activation before approval and retains the granted identity permission', async () => {
+    const { repository, host, extension, first, coordinator } = lifecycleFixture({
+      [revisionId('lifecycleFirst')]: (item) =>
+        lifecycleManifest(item, {
+          sdk: 16,
+          permissions: { agent: { members: { identities: true } } },
+        }),
+    })
+    const agent = agentId('identityApproval')
+    const requirement = coordinator.agentRequirement(agent, extension.id, first.id)
+    expect(requirement).toMatchObject({
+      approvalRequired: true,
+      declaration: { capabilities: { members: { identities: true } } },
+    })
+    await expect(
+      coordinator.activate({ agentId: agent, extensionId: extension.id, revisionId: first.id }),
+    ).rejects.toThrow(`permission-approval-required:${requirement.permissionDigest}`)
+    expect(host.attached.has(`${agent}\0${first.id}`)).toBe(false)
+    expect(repository.getActivation(agent, extension.id)).toBeUndefined()
+    await expect(
+      coordinator.activate({
+        agentId: agent,
+        extensionId: extension.id,
+        revisionId: first.id,
+        permissionApproval: { permissionDigest: 'f'.repeat(64) },
+      }),
+    ).rejects.toThrow('permission-approval-required')
+    await coordinator.activate({
+      agentId: agent,
+      extensionId: extension.id,
+      revisionId: first.id,
+      permissionApproval: { permissionDigest: requirement.permissionDigest },
+    })
+    expect(host.attached.has(`${agent}\0${first.id}`)).toBe(true)
+    expect(
+      repository.getHostUiPermissionGrant(`activation:${agent}:${extension.id}`)?.declaration.capabilities?.members,
+    ).toEqual({ identities: true })
+    expect(coordinator.agentRequirement(agent, extension.id, first.id).approvalRequired).toBe(false)
   })
 
   it('requires the agents to approve a switch only when the new record asks them for more', async () => {
