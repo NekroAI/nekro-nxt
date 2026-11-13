@@ -12,7 +12,7 @@
 
 ## 当前边界
 
-- 该通道基于非官方微信 iLink / OpenIlink 协议 SDK，协议稳定性、账号风控和合规风险不由 NekroNXT 保证；建议只使用专用微信机器人账号。
+- 微信 iLink 是微信官方提供的机器人接入方式，官方实现为 `@tencent-weixin/openclaw-weixin`。本包通过社区客户端 `wechat-ilink-client` 调用 iLink 接口，该客户端依据官方实现整理而来，不随官方版本更新。
 - 当前不开放群聊、Mention、语音、引用、撤回、主动发送或出站媒体能力；图片和文件仅支持入站接收，优先按 SDK 解密下载入站 media，下载失败时记录可解释的 rich fallback。
 - 入站文件只作为频道资源保存和展示，不主动复制到智能体开发工作区。
 - syncBuf 在整批消息成功接纳后才保存；会话 context_token 由 Connection scoped state 保存。
