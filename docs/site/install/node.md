@@ -107,7 +107,7 @@ systemctl enable --now nekro-nxt
 ## 启动后
 
 - 新版本第一次启动时会先生成升级恢复点，期间管理接口返回 `host-upgrading`，等一两分钟即可。
-- 升级没有完成、进入恢复状态后，每次启动都会报同一个原因。排除问题后，以服务用户和同样的环境变量手动运行一次 `node /opt/nekro/server/dist/main.mjs --retry-upgrade`，完成后再用 systemd 启动。
+- 升级没有完成时进入恢复状态。排除问题后重新启动服务；仍然报同一个原因时，以服务用户和同样的环境变量手动运行一次 `node /opt/nekro/server/dist/main.mjs --retry-upgrade`，完成后再用 systemd 启动。
 - 运行日志在 `/data/logs/logs.sqlite`，也可以在网页的「日志」里查看。
 
 ## 从 Docker 迁过来要改的配置
