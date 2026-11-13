@@ -367,7 +367,13 @@ const createServerUpgradeJournal = async (
   backupRoot: string,
   releaseId: string,
   getBackupId: () => string | undefined,
-): Promise<UpgradeJournal & { readonly finish: (status: 'ready' | 'recovery', error?: string) => Promise<void> }> => {
+): Promise<
+  UpgradeJournal & {
+    readonly finish: (status: 'ready' | 'recovery', error?: string) => Promise<void>
+    /** A step of this release began, now or on an earlier start, and has not completed since. */
+    readonly hasUnfinishedStep: () => boolean
+  }
+> => {
   const journalPath = path.join(backupRoot, `upgrade-${upgradeIdentity(releaseId)}.json`)
   let record: ServerUpgradeJournalRecord
   try {
@@ -460,6 +466,7 @@ const createServerUpgradeJournal = async (
         }),
       )
     },
+    hasUnfinishedStep: () => Object.values(record.steps).some((step) => step.status !== 'completed'),
   }
 }
 
@@ -532,6 +539,9 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
   }
   throw new Error('Cannot acquire the upgrade lock.')
 }
+
+/** The upgrade stopped at the lock, the checks or the backup with no step left unfinished: the data is as the last good start left it. */
+class UpgradeNotStartedError extends Error {}
 
 const createRuntimeThroughUpgradeCoordinator = async (
   dataRoot: string,
@@ -644,7 +654,8 @@ const createRuntimeThroughUpgradeCoordinator = async (
   if (status.phase !== 'ready' || !runtime) {
     const summary = status.errorSummary ?? 'Upgrade did not reach ready.'
     await journal.finish('recovery', summary)
-    throw new Error(`升级失败：${summary}`)
+    const message = `升级失败：${summary}`
+    throw journal.hasUnfinishedStep() ? new Error(message) : new UpgradeNotStartedError(message)
   }
   await journal.finish('ready')
   if (backupPolicy.mode !== 'off') {
@@ -1037,7 +1048,8 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
       resolveRoot(options.dataRoot),
       parseReleaseId(options.releaseId),
       error instanceof Error ? error.message.slice(0, 512) : '启动失败。',
-      options.signal?.aborted === true,
+      // Trying again is harmless when nothing was changed; a low disk is back to normal once space is freed.
+      options.signal?.aborted === true || error instanceof UpgradeNotStartedError,
     ).catch((failure: unknown) => {
       progressFailure = failure
     })
@@ -1265,7 +1277,7 @@ if (isEntryPoint()) {
       )
       console.log(
         handle.recovery
-          ? `[nekro-nxt] 恢复页面已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}。修复原因后可使用 --retry-upgrade 重试。`
+          ? `[nekro-nxt] 恢复页面已监听 ${handle.secure ? 'https' : 'http'}://${host}:${handle.port}。修复原因后重新启动；仍进入恢复页面时，加 --retry-upgrade 重试。`
           : handle.secure
             ? `[nekro-nxt] Server ${releaseId} 已监听 https://${host}:${handle.port}（同一端口也接受 http://，浏览器访问需输入管理密钥登录）`
             : `[nekro-nxt] Server ${releaseId} 已监听 http://${host}:${handle.port}`,
