@@ -19,7 +19,7 @@
   },
   "dependencies": {
     "@nekro-nxt/contracts": "workspace:*",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "description": "NekroNXT 适配器开发 SDK",
   "author": "NekroAI contributors",
