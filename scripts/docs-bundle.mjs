@@ -119,9 +119,20 @@ const quotedTerms = (lines) => {
   return [...terms]
 }
 
-/** A tour's step text describes the interface too, so its 「」 words are checked like the page's. */
+/** Tours, wizards and pipelines describe the interface too, so their 「」 words are checked like the page's. */
 const widgetTerms = (widgets) =>
-  quotedTerms(widgets.flatMap((widget) => (widget.kind === 'tour' ? widget.data.steps.map((step) => step.text) : [])))
+  quotedTerms(
+    widgets.flatMap((widget) => {
+      if (widget.kind === 'tour') return widget.data.steps.map((step) => step.text)
+      if (widget.kind === 'wizard')
+        return widget.data.steps.flatMap((step) => [
+          step.ask ?? step.answer,
+          ...(step.choices ?? []).map((choice) => choice.label),
+        ])
+      if (widget.kind === 'pipeline') return widget.data.stages.map((stage) => stage.detail)
+      return []
+    }),
+  )
 
 async function readSections() {
   const raw = JSON.parse(await readFile(path.join(repositoryRoot, siteRoot, 'sections.json'), 'utf8'))
@@ -301,6 +312,17 @@ export async function readSite({ commit = 'main' } = {}) {
       )
     }
     page.markdown = `${lines.join('\n').trim()}\n`
+    // A wizard's answers link like prose does; a link to this page's own section becomes a full one, since agents read
+    // the wizard apart from the page.
+    for (const widget of page.widgets)
+      if (widget.kind === 'wizard')
+        for (const step of widget.data.steps) {
+          if (step.link === undefined) continue
+          if (!step.link.startsWith('#')) step.link = resolveLink(page, step.link, false)
+          else if (!page.anchors.has(step.link.slice(1)))
+            errors.push(`${page.file}：组件 ${widget.id} 链接的小节 ${step.link} 不存在`)
+          else step.link = `/docs/${page.id}${step.link}`
+        }
   }
   return { sections, pages, assets, errors }
 }

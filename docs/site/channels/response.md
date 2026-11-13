@@ -26,6 +26,49 @@ flow: channels
 | 平台命令事件 | 平台上报原生命令事件时 | 平台自带命令的机器人，一般用不到 |
 | 仅观察 | 只记录，不回复 | 想让她长期旁听 |
 
+同一段群聊，换一种触发方式，她回的消息就不一样：
+
+```nxt:chat
+id: response-trigger-modes
+title: 同一段群聊，三种触发方式
+agent: 小荧
+modes:
+  - id: mention
+    label: 被提及时
+    note: 只有 @ 她或回复她的消息时才叫醒她
+  - id: smart
+    label: 智能响应
+    note: 提到她的名字、刚和她聊过的人接着说，也会叫醒她
+  - id: every
+    label: 每条消息
+    note: 每条消息都交给她
+messages:
+  - from: 阿青
+    text: 周末有人去爬山吗
+    reply:
+      every: 我去不了，不过可以帮你们看看天气。
+  - from: 小林
+    text: '@小荧 周六山上会下雨吗'
+    reply:
+      mention: 周六多云转晴，下午山顶风大，带件外套就行。
+      smart: mention
+      every: mention
+  - from: 小林
+    text: 好，那我去
+    reply:
+      smart: 那记得早点出发，下午风会更大。
+      every: smart
+  - from: 木木
+    text: 小荧要是能去就好了
+    reply:
+      smart: 我在群里等你们的照片。
+      every: smart
+  - from: 阿青
+    text: 我先睡了，晚安
+    reply:
+      every: 晚安～
+```
+
 “智能响应”靠名字认出别人在叫她，在智能体的「设定」里填好「别名」，见[设定与频道说明](../agents/persona.md#别名)。
 
 ## 回复细节

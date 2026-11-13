@@ -14,6 +14,8 @@ export const BUNDLE_FENCE = 'nxt-widget'
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
 const TONES = new Set(['positive', 'neutral', 'negative'])
 const MAX_STEPS = 8
+const MAX_CHOICES = 4
+const MAX_MESSAGES = 14
 
 class WidgetError extends Error {}
 
@@ -172,7 +174,121 @@ const diagram = (raw) => {
   return fail('图解的 type 只能是 flow、layers 或 compare')
 }
 
-const KINDS = { tour, diagram }
+/**
+ * 排查向导: questions with a few answers each, ending in what to do. Steps are listed flat and point at each other by
+ * id; the first one is where it starts. Every step must be reachable and the questions must not loop back.
+ */
+const wizard = (raw) => {
+  only(raw, ['id', 'title', 'steps'], '排查向导')
+  const steps = list(raw.steps, 'steps', { min: 2, max: 16 }).map((step, index) => {
+    const where = `第 ${index + 1} 步`
+    if (!isRecord(step)) fail(`${where} 要写 id 和 ask 或 answer`)
+    const stepId = id(step.id, `${where} 的 id`)
+    if (step.ask !== undefined) {
+      only(step, ['id', 'ask', 'choices'], `${where}（${stepId}）`)
+      return {
+        id: stepId,
+        ask: text(step.ask, `${stepId} 的 ask`, { max: 60 }),
+        choices: list(step.choices, `${stepId} 的 choices`, { min: 2, max: MAX_CHOICES }).map((choice, position) => {
+          const at = `${stepId} 第 ${position + 1} 个选项`
+          if (!isRecord(choice)) fail(`${at} 要写 label 和 next`)
+          only(choice, ['label', 'next'], at)
+          return { label: text(choice.label, `${at} 的 label`, { max: 20 }), next: id(choice.next, `${at} 的 next`) }
+        }),
+      }
+    }
+    only(step, ['id', 'answer', 'link'], `${where}（${stepId}）`)
+    return {
+      id: stepId,
+      answer: text(step.answer, `${stepId} 的 answer`, { max: 160 }),
+      ...(step.link === undefined ? {} : { link: text(step.link, `${stepId} 的 link`, { max: 120 }) }),
+    }
+  })
+  const byId = new Map()
+  for (const step of steps) {
+    if (byId.has(step.id)) fail(`步骤 ${step.id} 重复`)
+    byId.set(step.id, step)
+  }
+  for (const step of steps)
+    for (const choice of step.choices ?? [])
+      if (!byId.has(choice.next)) fail(`${step.id} 的选项「${choice.label}」指向不存在的步骤 ${choice.next}`)
+  const seen = new Set()
+  const walk = (stepId, path) => {
+    if (path.includes(stepId)) fail(`步骤绕回去了：${[...path, stepId].join(' → ')}`)
+    seen.add(stepId)
+    for (const choice of byId.get(stepId).choices ?? []) walk(choice.next, [...path, stepId])
+  }
+  if (steps[0].ask === undefined) fail('第一步要是一个问题（ask）')
+  walk(steps[0].id, [])
+  const unused = steps.filter((step) => !seen.has(step.id)).map((step) => step.id)
+  if (unused.length > 0) fail(`这些步骤走不到：${unused.join('、')}`)
+  return { steps }
+}
+
+/**
+ * 聊天回放: a made-up group chat played message by message. With `modes`, each message says which modes she answers it
+ * in, so switching the mode shows which messages wake her; without, `reply` is her one answer.
+ */
+const chat = (raw) => {
+  only(raw, ['id', 'title', 'agent', 'modes', 'messages'], '聊天回放')
+  const modes =
+    raw.modes === undefined
+      ? []
+      : list(raw.modes, 'modes', { min: 2, max: 4 }).map((mode, index) => {
+          const where = `第 ${index + 1} 种方式`
+          if (!isRecord(mode)) fail(`${where} 要写 id 和 label`)
+          only(mode, ['id', 'label', 'note'], where)
+          return {
+            id: id(mode.id, `${where} 的 id`),
+            label: text(mode.label, `${where} 的 label`, { max: 10 }),
+            ...(mode.note === undefined ? {} : { note: text(mode.note, `${where} 的 note`, { max: 40 }) }),
+          }
+        })
+  const modeIds = new Set(modes.map((mode) => mode.id))
+  if (modeIds.size !== modes.length) fail('modes 里有重复的 id')
+  const messages = list(raw.messages, 'messages', { max: MAX_MESSAGES }).map((message, index) => {
+    const where = `第 ${index + 1} 条消息`
+    if (!isRecord(message)) fail(`${where} 要写 from 和 text`)
+    only(message, ['from', 'text', 'reply'], where)
+    const base = { from: text(message.from, `${where} 的 from`, { max: 10 }), text: text(message.text, `${where} 的 text`, { max: 80 }) }
+    if (message.reply === undefined) return { ...base, replies: {} }
+    if (modes.length === 0) return { ...base, replies: { '': text(message.reply, `${where} 的 reply`, { max: 80 }) } }
+    if (!isRecord(message.reply)) fail(`${where} 的 reply 要按方式写，比如 ${modes[0].id}: 回复内容`)
+    const replies = {}
+    for (const [mode, value] of Object.entries(message.reply)) {
+      if (!modeIds.has(mode)) fail(`${where} 的 reply 里没有 ${mode} 这种方式`)
+      // A reply that is the same in several modes is written once and named by the others: `every: mention`.
+      replies[mode] = typeof value === 'string' && modeIds.has(value) ? value : text(value, `${where} 的 reply.${mode}`, { max: 80 })
+    }
+    for (const [mode, value] of Object.entries(replies))
+      if (modeIds.has(value)) {
+        const target = replies[value]
+        if (target === undefined || modeIds.has(target)) fail(`${where} 的 reply.${mode} 指向的 ${value} 没有写回复`)
+        replies[mode] = target
+      }
+    return { ...base, replies }
+  })
+  return { agent: text(raw.agent, 'agent', { max: 10 }), modes, messages }
+}
+
+/** 链路动画: something passing through a fixed series of stages, each with a short note and what happens there. */
+const pipeline = (raw) => {
+  only(raw, ['id', 'title', 'stages'], '链路动画')
+  return {
+    stages: list(raw.stages, 'stages', { min: 2, max: MAX_STEPS }).map((stage, index) => {
+      const where = `第 ${index + 1} 环`
+      if (!isRecord(stage)) fail(`${where} 要写 label 和 detail`)
+      only(stage, ['label', 'note', 'detail'], where)
+      return {
+        label: text(stage.label, `${where} 的 label`, { max: 8 }),
+        ...(stage.note === undefined ? {} : { note: text(stage.note, `${where} 的 note`, { max: 16 }) }),
+        detail: text(stage.detail, `${where} 的 detail`, { max: 120 }),
+      }
+    }),
+  }
+}
+
+const KINDS = { tour, diagram, wizard, chat, pipeline }
 
 /** The widget blocks of a page's markdown, validated; throws with the line of the block in the message. */
 export function parseWidget(kind, source, where) {
@@ -204,6 +320,53 @@ export function describeWidget(widget) {
     return [
       `截图导览「${title}」：界面截图上按顺序标了 ${data.steps.length} 处。`,
       ...data.steps.map((step, index) => `${index + 1}. ${step.text}`),
+    ].join('\n')
+  if (kind === 'wizard') {
+    // Steps get short names (问题 1, 办法 2) so the tree reads flat: an agent can ask one question at a time and jump.
+    const names = new Map()
+    let questions = 0
+    let answers = 0
+    for (const step of data.steps) names.set(step.id, step.ask === undefined ? `办法 ${++answers}` : `问题 ${++questions}`)
+    return [
+      `排查向导「${title}」：一问一答，从问题 1 开始，按回答跳到下一步，直到一个办法。可以照着在聊天里一问一答地带对方排查。`,
+      ...data.steps.map((step) =>
+        step.ask === undefined
+          ? `${names.get(step.id)}：${step.answer}${step.link === undefined ? '' : `（详见 ${step.link}）`}`
+          : `${names.get(step.id)}：${step.ask}\n${step.choices.map((choice) => `  - ${choice.label} → ${names.get(choice.next)}`).join('\n')}`,
+      ),
+    ].join('\n')
+  }
+  if (kind === 'chat') {
+    const lines = [
+      data.modes.length === 0
+        ? `聊天回放「${title}」：一段模拟群聊，智能体叫「${data.agent}」。`
+        : `聊天回放「${title}」：一段模拟群聊，智能体叫「${data.agent}」；可以切换 ${data.modes.map((mode) => mode.label).join('、')}，看她在每种方式下回哪几条。`,
+      ...data.modes.flatMap((mode) => (mode.note === undefined ? [] : [`- ${mode.label}：${mode.note}`])),
+    ]
+    const labelOf = new Map(data.modes.map((mode) => [mode.id, mode.label]))
+    data.messages.forEach((message, index) => {
+      lines.push(`${index + 1}. ${message.from}：${message.text}`)
+      if (data.modes.length === 0) {
+        if (message.replies[''] !== undefined) lines.push(`   ${data.agent} 回：${message.replies['']}`)
+        return
+      }
+      // Modes with the same reply are said together; modes she stays quiet in are named, since that is the point.
+      const byReply = new Map()
+      for (const mode of data.modes) {
+        const reply = message.replies[mode.id] ?? null
+        byReply.set(reply, [...(byReply.get(reply) ?? []), labelOf.get(mode.id)])
+      }
+      for (const [reply, modes] of byReply)
+        lines.push(`   ${modes.join('、')}：${reply === null ? '不回' : `${data.agent} 回「${reply}」`}`)
+    })
+    return lines.join('\n')
+  }
+  if (kind === 'pipeline')
+    return [
+      `链路动画「${title}」：依次经过 ${data.stages.length} 环。`,
+      ...data.stages.map(
+        (stage, index) => `${index + 1}. ${stage.label}${stage.note === undefined ? '' : `（${stage.note}）`}：${stage.detail}`,
+      ),
     ].join('\n')
   if (data.type === 'flow') {
     const names = label(data.nodes)
@@ -238,10 +401,30 @@ export function widgetPosters(widget) {
       { state: 'overview', label: `${widget.title}：全部 ${widget.data.steps.length} 步` },
       ...widget.data.steps.map((step, index) => ({ state: `step-${index + 1}`, label: `第 ${index + 1} 步：${step.text}` })),
     ]
+  if (widget.kind === 'chat' && widget.data.modes.length > 0) {
+    const [first, ...rest] = widget.data.modes
+    return [
+      { state: 'overview', label: `${widget.title}：选“${first.label}”时她回的消息` },
+      ...rest.map((mode) => ({ state: `mode-${mode.id}`, label: `${widget.title}：选“${mode.label}”时她回的消息` })),
+    ]
+  }
+  if (widget.kind === 'pipeline')
+    return [
+      { state: 'overview', label: `${widget.title}：${widget.data.stages.map((stage) => stage.label).join(' → ')}` },
+      ...widget.data.stages.map((stage, index) => ({
+        state: `step-${index + 1}`,
+        label: `第 ${index + 1} 环「${stage.label}」：${stage.detail}`,
+      })),
+    ]
+  if (widget.kind === 'wizard') return [{ state: 'overview', label: `${widget.title}：第一个问题` }]
   return [{ state: 'overview', label: widget.title }]
 }
 
-export const widgetAnimates = (widget) => widget.kind === 'diagram' && widget.data.type === 'flow' && widget.data.animate
+/** Widgets that move get a GIF too: a chat plays in its first mode, a pipeline passes through every stage. */
+export const widgetAnimates = (widget) =>
+  widget.kind === 'chat' ||
+  widget.kind === 'pipeline' ||
+  (widget.kind === 'diagram' && widget.data.type === 'flow' && widget.data.animate)
 
 /**
  * Replaces each widget block of a page with the bundle's ```nxt-widget block holding just its id. Returns the new

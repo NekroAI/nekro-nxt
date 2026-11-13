@@ -150,7 +150,7 @@ export const communityDocsTools = (port: () => CommunityDocsPort | undefined) =>
     }),
     defineTool({
       name: DOCS_READ_TOOL,
-      description: `读一页 NekroNXT 使用文档，或其中一个小节。id 和 anchor 来自 ${DOCS_SEARCH_TOOL} 的结果。返回的 ui 是这页功能在界面上的位置。正文里的截图导览、图解已经换成文字，写清了图上的全部内容；images 列出这部分的图，ref 是编号，shows 是图上画了什么，要发给对方用 ${DOCS_MEDIA_TOOL}。`,
+      description: `读一页 NekroNXT 使用文档，或其中一个小节。id 和 anchor 来自 ${DOCS_SEARCH_TOOL} 的结果。返回的 ui 是这页功能在界面上的位置。正文里的组件（截图导览、图解、链路动画、聊天回放、排查向导）已经换成文字，写清了图上的全部内容；images 列出这部分的图，ref 是编号，shows 是图上画了什么，要发给对方用 ${DOCS_MEDIA_TOOL}。排查向导是一棵问答树，带对方排查时不用发图，在聊天里一次问一个问题，按回答往下走。`,
       parameters: {
         id: { type: 'string', required: true, description: '页面编号，形如 troubleshooting/models。' },
         anchor: { type: 'string', description: '只读这个小节；不写读整页。' },
@@ -182,7 +182,7 @@ export const communityDocsMediaTool = (port: () => CommunityDocsPort | undefined
     description: [
       `把 NekroNXT 使用文档里的一张图存成当前频道的资源，返回 assetId，再用 send_channel_message 发出去。ref 来自 ${DOCS_READ_TOOL} 返回的 images。`,
       '对方问某个设置在哪、怎么点时，一张标好步骤的截图比一段话清楚，就发图；截图导览有每一步单独的图（ref 以 /step-2 这样结尾），只发对方卡住的那一步。',
-      '讲流程、讲关系时可以发图解，有动图（/animation）的发动图。一次回答一两张就够，不要把整页的图都发出去。',
+      '讲流程、讲关系时可以发图解或链路动画，有动图（/animation）的发动图。一次回答一两张就够，不要把整页的图都发出去。',
     ].join(''),
     parameters: {
       ref: {

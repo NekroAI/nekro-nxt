@@ -10,6 +10,12 @@ export function hasPreviewProductChanges(paths) {
   })
 }
 
+/**
+ * The user documentation (docs/site) ships with Preview, but a change to it alone does not rebuild the installers: CI
+ * publishes just the documentation then (docs/site/BUNDLE.md).
+ */
+export const hasPreviewDocsChanges = (paths) => paths.some((file) => file.startsWith('docs/site/'))
+
 export function publishedPreviewCommit(release) {
   if (!release || release.draft) return undefined
   return /<!-- nxt-preview-commit:([a-f0-9]{40}) -->/u.exec(release.body ?? '')?.[1]
