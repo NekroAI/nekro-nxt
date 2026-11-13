@@ -54,14 +54,17 @@ export const redactFeedbackText = (text: string, context: FeedbackRedactionConte
   for (const [directory, label] of [...directories].sort((a, b) => b[0].length - a[0].length)) {
     if (directory)
       result = result.replace(
-        new RegExp(`${escapePattern(directory.replace(/[\\/]$/u, ''))}(?=[\\\\/]|$|[\\s"'])`, 'gu'),
+        new RegExp(
+          String.raw`(?<![\w:/\\.-])${escapePattern(directory.replace(/[\\/]$/u, ''))}(?=[\\/]|$|[\s"'])`,
+          'gu',
+        ),
         label,
       )
   }
   result = result
     .replace(/file:\/\/[^\s<>"']+/giu, '<本机路径>')
     .replace(
-      /(^|[\s("'`=])(?:\/(?:Users|home|root|data|tmp|var|etc|opt|private|mnt|Volumes|workspace|workspaces)\/[^\s<>"']*|[A-Za-z]:[\\/][^\s<>"']*|\\\\[^\s\\]+\\[^\s<>"']*)/gu,
+      /(^|[\s("'`=:])(?:\/(?:Users|home|root|data|tmp|var|etc|opt|private|mnt|Volumes|workspace|workspaces)\/[^\s<>"']*|[A-Za-z]:[\\/][^\s<>"']*|\\\\[^\s\\]+\\[^\s<>"']*)/gu,
       '$1<本机路径>',
     )
   const aliases = replacements(context)
