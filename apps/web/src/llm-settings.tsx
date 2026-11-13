@@ -6,6 +6,7 @@ import { ChevronRight, RefreshCw, Trash2 } from 'lucide-react'
 import { useEffect, useId, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { HostApiContracts, type HostApiResponse } from '@nekro-nxt/contracts'
 import { providerDisplayName } from './provider-labels.js'
+import { PROVIDER_PRESETS, presetByKey, presetForBaseURL } from './provider-presets.js'
 import { useCredentials } from './credentials/credentials-data.js'
 import { relativeTime } from './app/channels/timeline-model.js'
 import {
@@ -158,6 +159,10 @@ export function AddProviderDialog({
 }) {
   const store = useProductRuntime().store
   const available = providers.filter((provider) => !provider.configured)
+  // A relay already added is not offered again.
+  const presets = PROVIDER_PRESETS.filter(
+    (preset) => !providers.some((provider) => presetForBaseURL(provider.baseURL ?? undefined) === preset),
+  )
   const [candidate, setCandidate] = useState('')
   const [starting, setStarting] = useState(false)
   /** A subscription route is the same provider signed in with an account instead of an API key. */
@@ -184,7 +189,7 @@ export function AddProviderDialog({
     onPick(provider?.provider ?? candidate)
   }
   useEffect(() => {
-    if (open) setCandidate(available[0]?.provider ?? CUSTOM_PROVIDER)
+    if (open) setCandidate(presets[0]?.key ?? available[0]?.provider ?? CUSTOM_PROVIDER)
     // Reset only on open; the catalog refreshing must not override the user's pick.
   }, [open])
   return (
@@ -208,6 +213,10 @@ export function AddProviderDialog({
           value={candidate}
           onValueChange={(value) => setCandidate(value)}
           options={[
+            ...presets.map((preset) => ({
+              value: preset.key,
+              label: preset.recommended ? `${preset.label}（推荐）` : preset.label,
+            })),
             ...available.map((provider) => ({
               value: provider.provider,
               label: providerDisplayName(provider.provider, provider.displayName),
@@ -239,7 +248,8 @@ export function ModelProviderDetail({
 }): ReactNode {
   const store = useProductRuntime().store
   const { settings } = useLlmProviders()
-  const customMode = requested === CUSTOM_PROVIDER
+  const preset = presetByKey(requested)
+  const customMode = requested === CUSTOM_PROVIDER || preset !== undefined
   const selected = useMemo(
     () => (customMode ? undefined : settings?.providers.find((provider) => provider.provider === requested)),
     [customMode, requested, settings],
@@ -253,7 +263,7 @@ export function ModelProviderDetail({
   const [picked, setPicked] = useState<readonly EditableModel[]>([])
   const [restoreOpen, setRestoreOpen] = useState(false)
   const [removing, setRemoving] = useState(false)
-  const [advancedOpen, setAdvancedOpen] = useState(customMode)
+  const [advancedOpen, setAdvancedOpen] = useState(customMode && preset === undefined)
   const [discovered, setDiscovered] = useState<readonly DiscoveredModelView[]>([])
   const [pending, setPending] = useState<'save' | 'discover' | 'test' | null>(null)
   const [submitted, setSubmitted] = useState(false)
@@ -266,6 +276,8 @@ export function ModelProviderDetail({
   const access = credentials.view?.modelProviders.find((provider) => provider.provider === selected?.provider)
   const [accessPending, setAccessPending] = useState(false)
 
+  /** The relay this route points at, for its key link and model filter; follows the address being edited. */
+  const keyPreset = presetForBaseURL(baseURL)
   const customEditor = customMode || selected?.declared === true
   const providerId = customMode
     ? settings
@@ -296,11 +308,11 @@ export function ModelProviderDetail({
     setModelsDirty(false)
     setPicked([])
     if (customMode) {
-      setDisplayName('')
-      setBaseURL('')
-      setApi(settings?.protocols[0] ?? '')
+      setDisplayName(preset?.label ?? '')
+      setBaseURL(preset?.baseURL ?? '')
+      setApi(preset?.api ?? settings?.protocols[0] ?? '')
       setRows([])
-      setAdvancedOpen(true)
+      setAdvancedOpen(preset === undefined)
       return
     }
     if (!selected) return
@@ -347,10 +359,13 @@ export function ModelProviderDetail({
         },
       )
       // Candidates only: the person picks which ones join the list.
-      setDiscovered(result.models)
-      const missing = modelsToAdd(rows, result.models).length
+      // A relay lists image, speech and embedding models beside chat ones; each entry offers only what it can serve.
+      const offers = presetForBaseURL(baseURL)?.offers
+      const models = offers ? result.models.filter((model) => offers(model.id)) : result.models
+      setDiscovered(models)
+      const missing = modelsToAdd(rows, models).length
       // Models already listed take the thinking levels and context length the provider reports for them.
-      const enriched = enrichRows(rows, result.models)
+      const enriched = enrichRows(rows, models)
       const improved = enriched.filter(
         (row, index) => row !== rows[index] && JSON.stringify(row) !== JSON.stringify(rows[index]),
       ).length
@@ -361,8 +376,8 @@ export function ModelProviderDetail({
       const filled = improved > 0 ? `已为 ${improved} 个模型补充思考强度等信息，保存后生效。` : ''
       toast(
         missing > 0
-          ? `已找到 ${result.models.length} 个可用模型，其中 ${missing} 个尚未加入列表。${filled}`
-          : `已找到 ${result.models.length} 个可用模型，均已在列表中。${filled}`,
+          ? `已找到 ${models.length} 个可用模型，其中 ${missing} 个尚未加入列表。${filled}`
+          : `已找到 ${models.length} 个可用模型，均已在列表中。${filled}`,
         { group: `llm-provider-discover:${providerId}` },
       )
     } catch (cause) {
@@ -494,7 +509,9 @@ export function ModelProviderDetail({
     (!customEditor || Boolean(displayName.trim() && baseURL.trim() && api))
   const canTest =
     Boolean(providerId && testModel) && modelsError === undefined && (!customEditor || Boolean(baseURL.trim() && api))
-  const title = selected ? providerDisplayName(selected.provider, selected.displayName) : '自定义供应商'
+  const title = selected
+    ? providerDisplayName(selected.provider, selected.displayName)
+    : (preset?.label ?? '自定义供应商')
 
   return (
     <form className={styles.detail} autoComplete="off" onSubmit={(event) => void save(event)}>
@@ -519,7 +536,7 @@ export function ModelProviderDetail({
               </span>
             </>
           ) : (
-            <span>连接任意 OpenAI 兼容接口</span>
+            <span>{preset ? '推荐的模型中转，兼容 OpenAI 接口' : '连接任意 OpenAI 兼容接口'}</span>
           )
         }
       />
@@ -553,6 +570,13 @@ export function ModelProviderDetail({
             ) : null}
             <Field
               label="API 密钥"
+              hint={
+                keyPreset ? (
+                  <a href={keyPreset.keyUrl} target="_blank" rel="noopener noreferrer">
+                    获取密钥
+                  </a>
+                ) : undefined
+              }
               tip={
                 selected?.credential?.configured
                   ? '留空表示沿用当前密钥；已保存密钥无法查看。'

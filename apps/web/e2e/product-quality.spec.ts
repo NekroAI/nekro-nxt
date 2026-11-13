@@ -1363,7 +1363,9 @@ test('model settings keep unconfigured providers behind the add flow', async ({ 
   await expect(overview.getByRole('row', { name: /DeepSeek/u })).toBeVisible()
   await expect(overview).not.toContainText('未配置供应商')
   await page.getByRole('button', { name: '添加供应商' }).first().click()
-  await expect(page.getByRole('dialog')).toContainText('未配置供应商')
+  await expect(page.getByRole('dialog')).toContainText('NekroAPI（推荐）')
+  await page.getByRole('dialog').getByRole('combobox').click()
+  await expect(page.getByRole('option', { name: '未配置供应商', exact: true })).toBeVisible()
   expect(failures, failures.join('\n')).toEqual([])
 })
 

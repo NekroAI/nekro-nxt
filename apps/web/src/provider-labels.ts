@@ -19,6 +19,7 @@ const providerLabels: Readonly<Record<string, string>> = {
   mistral: 'Mistral AI',
   moonshotai: 'Moonshot AI',
   'moonshotai-cn': 'Moonshot AI（中国）',
+  nekroapi: 'NekroAPI',
   nvidia: 'NVIDIA',
   openai: 'OpenAI',
   opencode: 'OpenCode',

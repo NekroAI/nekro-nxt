@@ -306,6 +306,8 @@ test('provider connection test uses the unsaved page draft without saving it', a
   })
   await page.goto('/settings/models')
   await page.getByRole('button', { name: '添加供应商' }).first().click()
+  await page.getByRole('dialog').getByRole('combobox').click()
+  await page.getByRole('option', { name: '自定义 OpenAI 兼容供应商', exact: true }).click()
   await page.getByRole('dialog').getByRole('button', { name: '开始配置' }).click()
   await page.getByLabel('供应商名称').fill('Draft Gateway')
   await page.getByLabel('API 密钥', { exact: true }).fill('unsaved-draft-key')

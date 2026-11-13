@@ -1,3 +1,4 @@
+import { presetByKey } from '../../provider-presets.js'
 import { CommandsSection } from './commands-section.js'
 import { SectionHead } from './section-head.js'
 import {
@@ -151,7 +152,9 @@ export default function SettingsSpace() {
   const requestedProvider = params.get('provider') ?? ''
   // Only what the address names is open; without it the section shows its overview instead of jumping to an item.
   const providerId =
-    requestedProvider === CUSTOM_PROVIDER || providers.some((provider) => provider.provider === requestedProvider)
+    requestedProvider === CUSTOM_PROVIDER ||
+    presetByKey(requestedProvider) !== undefined ||
+    providers.some((provider) => provider.provider === requestedProvider)
       ? requestedProvider
       : ''
   const requestedEntry = params.get('entry') ?? ''

@@ -274,3 +274,48 @@ test('saving a provider adds the picked models and can open the provider to exte
   await page.screenshot({ path: '.local/model-provider-extension-access-1440.png', animations: 'disabled' })
   expect(failures).toEqual([])
 })
+
+test('NekroAPI leads the add dialog and its model list keeps only chat models', async ({ page }) => {
+  const failures: string[] = []
+  page.on('pageerror', (error) => failures.push(error.message))
+  page.on('console', (message) => {
+    if (message.type() === 'error') failures.push(message.text())
+  })
+  const discoverRequests: unknown[] = []
+  await page.route('**/api/llm/discover-models', async (route) => {
+    discoverRequests.push(route.request().postDataJSON())
+    await route.fulfill({
+      json: {
+        models: [
+          { id: 'claude-synthetic' },
+          { id: 'claude-synthetic-nocache' },
+          { id: 'gemini-synthetic' },
+          { id: 'gpt-synthetic' },
+          { id: 'gpt-image-2' },
+          { id: 'gemini-3-pro-image' },
+          { id: 'text-embedding-synthetic' },
+          { id: 'bge-reranker-synthetic' },
+        ],
+      },
+    })
+  })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/settings/models')
+  await page.getByRole('button', { name: '添加供应商' }).first().click()
+  const dialog = page.getByRole('dialog', { name: '添加模型供应商' })
+  await expect(dialog).toContainText('NekroAPI（推荐）')
+  await page.screenshot({ path: '.local/nekro-api-add-dialog-1440.png', animations: 'disabled' })
+  await dialog.getByRole('combobox').click()
+  await expect(page.getByRole('option', { name: 'NekroAPI · Claude', exact: true })).toBeVisible()
+  await page.screenshot({ path: '.local/nekro-api-add-dialog-open-1440.png', animations: 'disabled' })
+  await page.getByRole('option', { name: 'NekroAPI（推荐）', exact: true }).click()
+  await dialog.getByRole('button', { name: '开始配置' }).click()
+
+  await expect(page.getByRole('link', { name: '获取密钥' })).toHaveAttribute('href', 'https://api.nekro.ai')
+  await page.getByLabel('API 密钥', { exact: true }).fill('synthetic-key')
+  await page.getByRole('button', { name: '获取可用模型', exact: true }).click()
+  await expect(page.getByText('已找到 2 个可用模型，其中 2 个尚未加入列表。')).toBeVisible()
+  expect(discoverRequests).toMatchObject([{ baseURL: 'https://api.nekro.ai/v1', api: 'openai-completions' }])
+  await page.screenshot({ path: '.local/nekro-api-detail-1440.png', animations: 'disabled' })
+  expect(failures, failures.join('\n')).toEqual([])
+})
