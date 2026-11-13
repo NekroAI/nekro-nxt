@@ -154,7 +154,10 @@ describe('NXT DSH profile migration and Settings', () => {
     expect(await second.credentials.resolve(credentialRef('FIXTURE_MODEL_KEY'))).toMatchObject({
       value: 'fixture-secret',
     })
-    expect((await stat(path.join(root, 'host-profile', 'cordis.patch.yml'))).mode & 0o077).toBe(0)
+    const patchInfo = await stat(path.join(root, 'host-profile', 'cordis.patch.yml'))
+    expect(patchInfo.isFile()).toBe(true)
+    if (process.platform === 'win32') expect(patchInfo.mode & 0o200).toBe(0o200)
+    else expect(patchInfo.mode & 0o077).toBe(0)
   })
 
   it('atomically imports good providers, quarantines bad ones and never overwrites the source', async () => {
