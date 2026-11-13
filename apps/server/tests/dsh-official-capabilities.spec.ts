@@ -851,6 +851,7 @@ describe('DSH official capability composition', () => {
         admissionId: AdmissionIdSchema.parse('adm_CHILDDYNAMIC'),
         events: [event],
         mode: 'followup',
+        triggerEventId: event.id,
         replyRequired: true,
       })
       await host.whenIdle(sessionId)
