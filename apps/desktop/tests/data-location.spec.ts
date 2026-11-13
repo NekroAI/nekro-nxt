@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import path from 'node:path'
 import {
   dataLocationFiles,
   parseDataLocationPointer,
@@ -24,25 +25,27 @@ const resolve = (override: string | undefined, texts: Record<string, string>, fa
 describe('Desktop data location', () => {
   it('keeps the pointer and the move record beside the default userData, outside every data directory', () => {
     expect(files).toEqual({
-      pointer: '/application-data/NekroNxt Preview.data-location.json',
-      record: '/application-data/NekroNxt Preview.data-move.json',
-      migrationSession: '/application-data/NekroNxt Preview.data-move-session',
+      pointer: path.join('/application-data', 'NekroNxt Preview.data-location.json'),
+      record: path.join('/application-data', 'NekroNxt Preview.data-move.json'),
+      migrationSession: path.join('/application-data', 'NekroNxt Preview.data-move-session'),
     })
   })
 
   it('resolves the environment variable first, then the pointer, then the default', () => {
-    const pointer = { [files.pointer]: serializeDataLocationPointer('/volumes/fast/NekroNXT') }
+    const pointerRoot = path.join('/volumes', 'fast', 'NekroNXT')
+    const defaultRoot = path.join('/application-data', 'NekroNxt Preview')
+    const pointer = { [files.pointer]: serializeDataLocationPointer(pointerRoot) }
     expect(resolve('/isolated/NekroNxt', pointer)).toEqual({
       root: '/isolated/NekroNxt',
       source: 'environment',
-      defaultRoot: '/application-data/NekroNxt Preview',
+      defaultRoot,
     })
-    expect(resolve(undefined, pointer)).toMatchObject({ root: '/volumes/fast/NekroNXT', source: 'pointer' })
-    expect(resolve('  ', pointer)).toMatchObject({ root: '/volumes/fast/NekroNXT', source: 'pointer' })
+    expect(resolve(undefined, pointer)).toMatchObject({ root: pointerRoot, source: 'pointer' })
+    expect(resolve('  ', pointer)).toMatchObject({ root: pointerRoot, source: 'pointer' })
     expect(resolve(undefined, {})).toEqual({
-      root: '/application-data/NekroNxt Preview',
+      root: defaultRoot,
       source: 'default',
-      defaultRoot: '/application-data/NekroNxt Preview',
+      defaultRoot,
     })
     expect(() => resolve('relative-data', pointer)).toThrow('绝对路径')
   })
@@ -59,6 +62,6 @@ describe('Desktop data location', () => {
   })
 
   it('round-trips the pointer format', () => {
-    expect(parseDataLocationPointer(serializeDataLocationPointer('/a/b/../c'))).toBe('/a/c')
+    expect(parseDataLocationPointer(serializeDataLocationPointer('/a/b/../c'))).toBe(path.join('/a', 'c'))
   })
 })
