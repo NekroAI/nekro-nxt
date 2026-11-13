@@ -257,6 +257,50 @@ describe('OneBot forward WebSocket transport', () => {
     expect(connections).toBe(settledConnections)
   })
 
+  it('drops a connection whose peer stopped answering and reconnects', async () => {
+    let connections = 0
+    const endpoint = await serve((socket) => {
+      connections += 1
+      const frozen = connections === 1
+      socket.on('message', (raw) => {
+        const request = decodeRequest(raw)
+        const action = request['action']
+        socket.send(
+          JSON.stringify({
+            status: 'ok',
+            retcode: 0,
+            data: action === 'get_login_info' ? { user_id: '90005' } : {},
+            echo: request['echo'],
+          }),
+        )
+        // A frozen machine keeps the TCP connection open but reads nothing more, pings included.
+        if (frozen && action === 'get_version_info') socket.pause()
+      })
+    })
+    const fake = createFakeContext()
+    const client = new OneBotWebSocketClient({
+      context: fake.context,
+      endpoint,
+      onEvent: () => Promise.resolve(),
+      reconnectDelaysMs: [5],
+      heartbeatIntervalMs: 20,
+    })
+    await client.start()
+    await waitFor(() => client.connected)
+    await waitFor(() => connections >= 2 && client.connected)
+    expect(fake.diagnostics).toContainEqual(
+      expect.objectContaining({ status: 'reconnecting', message: '协议端没有回应，0.005 秒后重连' }),
+    )
+    // The second peer answers pings, so it stays.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(connections).toBe(2)
+    expect(client.connected).toBe(true)
+    await client.stop()
+    const settledConnections = connections
+    await new Promise((resolve) => setTimeout(resolve, 60))
+    expect(connections).toBe(settledConnections)
+  })
+
   it('times out submitted Actions as unknown and serializes inbound event handling', async () => {
     let releaseFirst: (() => void) | undefined
     const firstBlocked = new Promise<void>((resolve) => {

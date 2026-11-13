@@ -11,6 +11,7 @@ import { z } from 'zod'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000
 const ACCOUNT_STATE_KEY = 'onebot-11/account-lock'
 
 export type OneBotObject = Readonly<Record<string, unknown>>
@@ -42,6 +43,8 @@ export interface OneBotWebSocketClientOptions {
   readonly onEvent: (event: OneBotObject) => Promise<void>
   readonly requestTimeoutMs?: number
   readonly reconnectDelaysMs?: readonly number[]
+  /** How often the peer is pinged; a peer silent for a whole interval after a ping is treated as gone. */
+  readonly heartbeatIntervalMs?: number
 }
 
 const OneBotObjectSchema = z.record(z.string(), z.unknown())
@@ -100,6 +103,7 @@ export class OneBotWebSocketClient {
   readonly #onEvent: OneBotWebSocketClientOptions['onEvent']
   readonly #requestTimeoutMs: number
   readonly #reconnectDelaysMs: readonly number[]
+  readonly #heartbeatIntervalMs: number
   readonly #pending = new Map<string, PendingAction>()
   readonly #optionalCapabilities = new Map<string, AdapterOptionalCapabilityStatus>()
   #eventQueue: Promise<void> = Promise.resolve()
@@ -125,6 +129,7 @@ export class OneBotWebSocketClient {
     this.#onEvent = options.onEvent
     this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.#reconnectDelaysMs = options.reconnectDelaysMs ?? [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
+    this.#heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS
   }
 
   get connected(): boolean {
@@ -246,15 +251,40 @@ export class OneBotWebSocketClient {
     })
     this.#socket = socket
     let ready = Promise.resolve(false)
+    // A peer that freezes or loses power never closes the socket, so silence is the only sign it is gone.
+    let heard = true
+    let unresponsive = false
+    let heartbeat: ReturnType<typeof setInterval> | undefined
+    const markHeard = (): void => {
+      heard = true
+    }
     socket.on('open', () => {
       ready = this.#initialize(generation, socket)
       this.#initialization = ready
+      heartbeat = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return
+        if (!heard) {
+          unresponsive = true
+          socket.terminate()
+          return
+        }
+        heard = false
+        socket.ping()
+      }, this.#heartbeatIntervalMs)
     })
-    socket.on('message', (data, isBinary) => this.#receive(generation, data, isBinary, ready))
+    socket.on('pong', markHeard)
+    socket.on('ping', markHeard)
+    socket.on('message', (data, isBinary) => {
+      markHeard()
+      this.#receive(generation, data, isBinary, ready)
+    })
     socket.on('error', () => {
       // close owns diagnostics and reconnect scheduling.
     })
-    socket.on('close', (_code, reason) => this.#closed(generation, socket, reason.toString()))
+    socket.on('close', (_code, reason) => {
+      if (heartbeat !== undefined) clearInterval(heartbeat)
+      this.#closed(generation, socket, reason.toString(), unresponsive)
+    })
   }
 
   async #initialize(generation: number, socket: WebSocket): Promise<boolean> {
@@ -333,7 +363,7 @@ export class OneBotWebSocketClient {
       .catch((error: unknown) => this.#publishCurrent(error instanceof Error ? error.message : String(error)))
   }
 
-  #closed(generation: number, socket: WebSocket, reason: string): void {
+  #closed(generation: number, socket: WebSocket, reason: string, unresponsive: boolean): void {
     if (generation !== this.#connectGeneration || socket !== this.#socket) return
     this.#socket = undefined
     this.#selfId = undefined
@@ -342,7 +372,7 @@ export class OneBotWebSocketClient {
     const index = Math.min(this.#reconnectAttempt, this.#reconnectDelaysMs.length - 1)
     const delay = this.#reconnectDelaysMs[index] ?? 30_000
     this.#reconnectAttempt += 1
-    this.#publish('reconnecting', reason || `连接断开，${delay / 1000} 秒后重连`)
+    this.#publish('reconnecting', reason || `${unresponsive ? '协议端没有回应' : '连接断开'}，${delay / 1000} 秒后重连`)
     this.#reconnectTimer = setTimeout(() => {
       this.#reconnectTimer = undefined
       this.#connect()

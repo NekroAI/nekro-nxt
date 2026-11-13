@@ -46,6 +46,7 @@ export interface OneBot11RuntimeOptions {
   readonly transport?: {
     readonly requestTimeoutMs?: number
     readonly reconnectDelaysMs?: readonly number[]
+    readonly heartbeatIntervalMs?: number
   }
 }
 
