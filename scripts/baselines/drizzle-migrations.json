@@ -67,6 +67,7 @@
     "0062_sub_conversation_last_activity.sql": "e79cc8ed986747f494619c3f36cc1ac1ee888c5a33cdb9c9b9ea56924fe3d461",
     "0063_push_subscriptions.sql": "08f5e4ff2a428be0e7e39bb7acbcd653cf99cf984bffa06d399ed81806114978",
     "0064_management_passkeys.sql": "3f822f9cbba18def844e97fb849d7266256812a00984384a9ce1f00590bee66f",
+    "0065_admission_turn_trigger.sql": "b49ce3ba1c3f57579e1986142bb0d4865c870acc2b2a853425f5da816dad91e3",
     "meta/0000_snapshot.json": "03573ed4ecfb276bfad4bd1d6041564c11d3c52e1fcb35fc3dd278da7b55448d",
     "meta/0001_snapshot.json": "48b7a1cd91c44d75a394c94af554fc85621fe5fda2dd680d4bc25b68679d4ee5",
     "meta/0002_snapshot.json": "aa0ed0d69885976c1ce596d468657ac121e8cae5ac9e09aa9843be0b3b3127c9",
@@ -131,6 +132,7 @@
     "meta/0062_snapshot.json": "ef23a296ebef5024624c5a4895170922dd97fc9278dafddf4d5b8e87c2e75a9a",
     "meta/0063_snapshot.json": "425401e52a41e2a1dff088897b5047ada764249bcbe280aec64cbb083824a40e",
     "meta/0064_snapshot.json": "4b789d0494051ef47480ae16230b2c981e4b494c94b091f34c17a4fcc5070032",
-    "meta/_journal.json": "648380b95b2baf19899d68f5d02d8cdb3d1cc79ba5e6d7374ae82ff50521f0e5"
+    "meta/0065_snapshot.json": "171167f49745563ae69ba5d809f1cc474ec0afa8c1bb0b761927580a626834a6",
+    "meta/_journal.json": "9821e201d719fdbd833285694fb358f866279604fdecb0753cb11f92bc15573a"
   }
 }

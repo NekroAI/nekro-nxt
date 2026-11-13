@@ -8,6 +8,8 @@
 
 迁移目录保留 Drizzle Kit 生成的 `0000_initial` 至当前增量迁移。空数据库按完整序列应用；已有带当前迁移元数据的数据库顺序应用新增迁移；任何不含 Drizzle migration 元数据的旧实验数据库都会被明确拒绝并要求重置。`CoreDatabase` 沿用 Drizzle 迁移文件与 journal 格式，在 immediate transaction 内执行待应用 SQL、记录迁移并检查全库外键；检查失败同时回滚结构、数据和 journal。事务前暂停外键执行，事务结束后恢复；当前版本无待应用迁移时也检查完整性，超出当前最新时间标识的未来迁移拒绝降级启动；已经支持的历史 journal 时间差异保留，不能据此拒绝现有数据。测试必须覆盖已有子表引用数据的真实表重建。不接管无 Drizzle journal 的旧实验格式；不修改已经发布的迁移文件。
 
+合并上游后，原分支的 `0063_admission_turn_trigger` 改为 `0065_admission_turn_trigger`。已有数据库仅在原迁移时间标识 `1794197225222` 与当前 `0065` 的 SQL 摘要同时匹配时保留已建字段，并在上述事务内补记新时间标识 `1794365082279`；上游新增的推送订阅与通行密钥迁移照常执行。原记录和轮次来源值保留，其他摘要或时间标识不按这条兼容规则跳过 SQL；失败仍回滚，重复启动不重放迁移。
+
 就绪写探针只更新 `system_settings` 的 `host/readiness-probe` 内部记录，不修改用户配置与迁移日志；成功缓存三十秒，检查时不等待写锁，随后恢复原 `busy_timeout`。数据根恢复后由新进程重新检查，不把旧记录当作当前健康结论。
 
 `agent_revisions.persona_document` 保存可空的版本化结构化人设 JSON；旧行读取时由 `persona` 合成单一文本段，新 Revision 同时保存权威文档与确定性纯文本兼容投影。平台用户目录直接从 `platform_identities`、Connection、Channel Member 与未删除 Channel 联合投影，保留没有活动频道的历史身份，不复制平台原始用户 ID 到 API DTO。
