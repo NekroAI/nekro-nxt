@@ -161,7 +161,9 @@ describe('the login page on phones and computers', () => {
 
   it('shows a phone its own code and why, when the page cannot reach the camera', async () => {
     // Plain HTTP on a network address: browsers keep the camera from the page.
-    const lan = await chromium.launch({ args: ['--host-resolver-rules=MAP nxt-lan.test 127.0.0.1'] })
+    const lan = await chromium.launch({
+      args: ['--host-resolver-rules=MAP nxt-lan.test 127.0.0.1', '--proxy-server=direct://'],
+    })
     launched.push(lan)
     const insecure = await (await lan.newContext(PHONE)).newPage()
     await insecure.goto(`http://nxt-lan.test:${edge.port}/login`)
