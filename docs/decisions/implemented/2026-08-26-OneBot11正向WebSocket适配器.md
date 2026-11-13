@@ -49,7 +49,7 @@ OneBot Connection 的智能体会话按运行时能力注册两个工具：
 
 ## 传输与能力探测
 
-Action 使用 Connection 前缀和随机 ID 作为 `echo`，响应与事件在同一 Socket 分流。Action 回执即时解析，入站事件按帧顺序串行提交给 Host；旧 Socket 的延迟回调不能改写新连接状态。请求默认 15 秒超时；写入后断线或超时记为未知。连接按 1、2、4 秒起步并最高 30 秒持续重连；`stop()` 清除定时器、关闭 Socket、拒绝待定请求，并等待已接收事件处理完成。单帧上限 16 MiB，二进制帧被拒绝。
+Action 使用 Connection 前缀和随机 ID 作为 `echo`，响应与事件在同一 Socket 分流。Action 回执即时解析，入站事件按帧顺序串行提交给 Host；旧 Socket 的延迟回调不能改写新连接状态。请求默认 15 秒超时；写入后断线或超时记为未知。连接按 1、2、4 秒起步并最高 30 秒持续重连；连接建立后每 30 秒发一次 Ping，上一次 Ping 之后没有收到任何帧时断开并按同样节奏重连；`stop()` 清除定时器、关闭 Socket、拒绝待定请求，并等待已接收事件处理完成。单帧上限 16 MiB，二进制帧被拒绝。
 
 连接后调用 `get_login_info` 与 `get_version_info`。版本信息只用于诊断。`set_msg_emoji_like` 和 `send_poke` 通过真实 Action 回执探测；只有明确的 unknown-action / unsupported 回执才缓存为不支持。
 
