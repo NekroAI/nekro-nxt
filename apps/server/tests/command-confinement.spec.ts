@@ -26,8 +26,8 @@ afterEach(() => {
 })
 
 /** A fictional host: home with a private key and a toolchain, a data root with credentials and two workspaces. */
-const fixture = () => {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-confinement-')))
+const fixture = (base = tmpdir()) => {
+  const root = realpathSync(mkdtempSync(path.join(base, 'nekro-nxt-confinement-')))
   directories.push(root)
   const home = path.join(root, 'home')
   const data = path.join(home, 'nxt-data')
@@ -96,7 +96,8 @@ describe('command confinement', () => {
   })
 
   it('grants Landlock reads for everything except hidden roots, following only safe symlinks', () => {
-    const { root, home, data, workspace, confinement } = fixture()
+    // Landlock enumerates the current volume; Windows may put the system temp directory on another one.
+    const { root, home, data, workspace, confinement } = fixture(process.cwd())
     symlinkSync(path.join(data, 'credentials'), path.join(root, 'credentials-link'))
     symlinkSync(path.join(home, '.nvm'), path.join(root, 'nvm-link'))
     const roots = landlockReadRoots(readRules(confinement, workspace))
@@ -112,7 +113,7 @@ describe('command confinement', () => {
   })
 
   it('leaves directories DSH grants writable to that grant instead of listing their entries', () => {
-    const { home, workspace, confinement } = fixture()
+    const { home, workspace, confinement } = fixture(process.cwd())
     // A writable temporary directory that holds hidden roots, as when the data root sits under /tmp.
     const scratch = path.join(home, 'scratch')
     mkdirSync(path.join(scratch, 'short-lived'), { recursive: true })
