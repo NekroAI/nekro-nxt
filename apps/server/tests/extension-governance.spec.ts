@@ -29,6 +29,7 @@ import { CommunitySyncService, type SyncCommunity } from '../src/extension-gover
 import { ExtensionRequestService, EXTENSION_REQUEST_TTL_MS } from '../src/extension-governance/requests.js'
 import { extensionVersions, lineageGraph, revisionProtections } from '../src/extension-governance/versions.js'
 import { HostLogService } from '../src/logs/service.js'
+import type { ChannelTurnTrigger } from '../src/channel-turn-origin.js'
 import { createExtensionRevisionExport } from '../src/host-route-support.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
 
@@ -2496,17 +2497,38 @@ describe('community sync', () => {
 
 describe('turn requester', () => {
   /** A runtime with one group channel whose turn opened on `event`; `mbr_admin` is an administrator. */
-  const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) => {
+  const portFor = (
+    event: { senderMemberId?: string; facts?: Record<string, unknown>; kind?: string; channelId?: string },
+    options: { trigger?: ChannelTurnTrigger; missingIdentity?: boolean; internal?: boolean; agentId?: string } = {},
+  ) => {
     const fake = {
       repository: {
-        getEpisode: () => ({ channelId: 'chn_group', lastAdmittedEventId: 'evt_last' }),
-        getChannelEvent: () => event,
-        getChannel: () => ({ id: 'chn_group', kind: 'group', connectionId: 'con_fixture' }),
-      },
-      core: {
-        resolveChannelMemberIdentity: (_connection: string, _channel: string, memberId: string) => ({
-          platformUserId: memberId === 'mbr_admin' ? 'user-admin' : 'user-member',
+        getEpisode: () => ({
+          agentId: options.agentId ?? 'agt_fixture',
+          dshSessionId: 'session_fixture',
+          channelId: 'chn_group',
+          lastAdmittedEventId: 'evt_last',
         }),
+        getChannelEvent: (eventId: string) =>
+          eventId === 'evt_trigger'
+            ? { channelId: 'chn_group', kind: 'message-created', ...event }
+            : { channelId: 'chn_group', senderMemberId: 'mbr_admin' },
+        getChannel: () => ({
+          id: 'chn_group',
+          kind: options.internal ? 'internal' : 'group',
+          connectionId: 'con_fixture',
+        }),
+        getAgent: () => ({ revision: { capabilities: { extensionRequesters: 'admins' } } }),
+      },
+      internalConnectionId: 'con_internal',
+      host: { turnTrigger: () => options.trigger ?? { kind: 'channel-event', eventId: 'evt_trigger' } },
+      core: {
+        resolveChannelMemberIdentity: (_connection: string, _channel: string, memberId: string) =>
+          options.missingIdentity
+            ? undefined
+            : {
+                platformUserId: memberId === 'mbr_admin' ? 'user-admin' : 'user-member',
+              },
       },
       administrators: { isAdministrator: (_connection: string, user?: string) => user === 'user-admin' },
     }
@@ -2523,6 +2545,36 @@ describe('turn requester', () => {
     expect(requester(wait('mbr_other'))).toEqual({ kind: 'member', memberId: 'mbr_other' })
     expect(requester({ senderMemberId: 'mbr_admin' })).toEqual({ kind: 'admin' })
     // A scheduled job has nobody behind it.
-    expect(requester({ facts: { extensionJob: { jobId: 'job_fixture' } } })).toEqual({ kind: 'self' })
+    expect(requester({ kind: 'control', facts: { extensionJob: { jobId: 'job_fixture' } } })).toEqual({ kind: 'self' })
+  })
+
+  it('does not borrow administrator authority from the latest Admission cursor or an arbitrary internal channel', () => {
+    expect(requester({ senderMemberId: 'mbr_other' })).toEqual({ kind: 'member', memberId: 'mbr_other' })
+    expect(
+      portFor({}, { internal: true }).requester(
+        AgentIdSchema.parse('agt_fixture'),
+        EpisodeIdSchema.parse('eps_fixture'),
+      ),
+    ).toEqual({ kind: 'unknown' })
+    expect(requester({ facts: { extensionJob: { jobId: 'job_fixture' } } })).toEqual({ kind: 'unknown' })
+    expect(requester({ facts: { consoleAnchor: true } })).toEqual({ kind: 'admin' })
+  })
+
+  it('fails closed for missing, foreign or unresolvable sources and permits explicit self work', () => {
+    const agentId = AgentIdSchema.parse('agt_fixture')
+    const episodeId = EpisodeIdSchema.parse('eps_fixture')
+    for (const port of [
+      portFor({ senderMemberId: 'mbr_admin' }, { trigger: { kind: 'unknown' } }),
+      portFor({ senderMemberId: 'mbr_admin' }, { agentId: 'agt_other' }),
+      portFor({ senderMemberId: 'mbr_admin', channelId: 'chn_other' }),
+      portFor({ senderMemberId: 'mbr_admin' }, { missingIdentity: true }),
+      portFor({}),
+    ]) {
+      expect(port.requester(agentId, episodeId)).toEqual({ kind: 'unknown' })
+      expect(port.requesterAllowed(agentId, episodeId).allowed).toBe(false)
+    }
+    const self = portFor({}, { trigger: { kind: 'self' } })
+    expect(self.requester(agentId, episodeId)).toEqual({ kind: 'self' })
+    expect(self.requesterAllowed(agentId, episodeId).allowed).toBe(true)
   })
 })

@@ -812,18 +812,21 @@ export class NekroRuntime {
         members: memberRelations,
         accountPlatformUserId: (connectionId) =>
           core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
-        turnTrigger: (episodeId) => {
-          const parsed = EpisodeIdSchema.safeParse(episodeId)
-          return parsed.success
+        turnTrigger: (binding) => {
+          const parsed = EpisodeIdSchema.safeParse(binding.episodeId?.())
+          const episode = parsed.success ? repository.getEpisode(parsed.data) : undefined
+          return parsed.success && episode?.agentId === binding.agentId && episode.channelId === binding.channelId
             ? turnTriggerOf(
                 {
                   repository,
+                  internalConnectionId,
                   isAdministrator: (connectionId, platformUserId) =>
                     repository.isInstanceAdministrator(connectionId, platformUserId),
                   platformUserId: (connectionId, channelId, memberId) =>
                     core.resolveChannelMemberIdentity(connectionId, channelId, memberId)?.platformUserId,
                 },
                 parsed.data,
+                hostReference.current?.turnTrigger(binding.sessionId) ?? { kind: 'unknown' },
               )
             : undefined
         },
@@ -1406,7 +1409,8 @@ export class NekroRuntime {
           service: authoringService,
           resolveInitiatingEvent: (episodeId) => {
             const episode = repository.getEpisode(episodeId)
-            return episode?.lastAdmittedEventId ?? episode?.openedAtEventId
+            const trigger = hostReference.current?.turnTrigger(episode?.dshSessionId)
+            return trigger?.kind === 'channel-event' ? trigger.eventId : undefined
           },
           governance: () => governancePort.current,
         },
@@ -1458,7 +1462,8 @@ export class NekroRuntime {
         nxtFor: attachmentNxt,
         channel: outboundChannel,
         triggeredBy: (episodeId) => {
-          const eventId = repository.getEpisode(episodeId)?.lastAdmittedEventId
+          const trigger = host.turnTrigger(repository.getEpisode(episodeId)?.dshSessionId)
+          const eventId = trigger.kind === 'channel-event' ? trigger.eventId : undefined
           return eventId === undefined ? undefined : repository.getChannelEvent(eventId)?.logicalMessageId
         },
         unsupported: (channelId, part) => {

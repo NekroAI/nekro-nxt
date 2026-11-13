@@ -456,6 +456,13 @@
       "when": 1794308167236,
       "tag": "0064_management_passkeys",
       "breakpoints": true
+    },
+    {
+      "idx": 65,
+      "version": "6",
+      "when": 1794550051396,
+      "tag": "0065_admission_turn_trigger",
+      "breakpoints": true
     }
   ]
 }

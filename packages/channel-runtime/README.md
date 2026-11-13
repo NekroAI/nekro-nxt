@@ -12,6 +12,8 @@ Handoff 的摘要来源由 `listEpisodeHistory()` 限定为旧 Episode 已完成
 
 `ChannelHistoryEntry` 对入站和出站统一携带 `logicalMessageId`；精确查询始终要求 `channelId + logicalMessageId`，不提供跨频道回退。Channel Event ID 继续属于 Admission、恢复和审计来源，不作为模型引用消息的身份。
 
+Admission 的 `triggerEventId` 保存实际唤醒这次准入的 Channel Event，必须属于该 Admission 的事件列表；恢复时原样交给 `AgentSessionDriver.admit()`，不能从批次末尾或 Episode 游标推断。`AgentSessionDriver.admissionMode()` 可按宿主当前轮次选择准入方式；未提供时，运行中注入、空闲时另开一轮。Server 的可信频道轮次继续注入，后台通知或来源未知的轮次把新频道消息排入下一轮，不取消当前工具。准入方式与触发事件写入公开 DSH 消息来源，用本轮首步的来源固定发起人，后续注入不替换；首步同时收到后台通知与唯一频道 followup 时保留该频道发起人。旧 Admission 或缺少可信来源的轮次保持未知，管理员专属扩展请求拒绝未知发起人。已有扩展开发任务在可信后台续轮中追加候选时保留该任务的持久发起事件；新任务仍需要可信频道发起事件。事件被入站钩子隐藏时仍可保存触发身份，上下文不回显其正文。
+
 Binding 的替换、清除和频道删除先按 `channelId` 串行，并在锁内重读当前 Binding，再进入实际 `(channelId, agentId)` lane。并发换绑因此总会停止提交时真正的前任 Session，不会留下已失去 Binding 的活动 Episode。`deleteChannel(channelId)` 在同一转换边界内先以 `channel-deleted` 取消 DSH Session、关闭 Episode，再清除 Binding 并写 Channel tombstone；不生成 handoff，也不删除频道事实、出站、资源引用或 DSH 历史。
 
 Binding 的普通 `triggerPolicy` 只控制普通消息。频道活动先读取 Binding 的布尔覆盖，key 缺失时读取具体 Connection 的默认值；最终为开启且当前 Adapter Descriptor 仍声明其可触发、匹配 Channel kind、Runtime 能力可用时才创建 Admission，`observe-only` 永远不触发。Connection 活动不进入本包。归档或删除 Connection 前使用 `suspendChannel()` 停止 Episode，但归档不会清除 Binding。处理中反馈只有 Descriptor 与 Runtime 都支持当前 Channel kind 时启用；每次开始处理时只回应首条符合条件的触发消息；处理中注入的新消息不再重复回应，即使平台已随回复消耗该回应，也要等本轮空闲后才能为下一轮创建。耐久 Lease 使用 Connection 命名空间，平台调用前持久化，Session 空闲或重启恢复后清理。`ProcessingFeedback` 独立持有租约、清理任务、重试计时器与持久化队列；关闭时取消延迟重试，等待已开始的清理任务完成，未能清理的租约保留到下次恢复。

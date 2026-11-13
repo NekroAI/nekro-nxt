@@ -390,7 +390,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
         request: DynamicCordisDefineRequest,
         receipt: DynamicCordisDefineReceipt,
         snapshot: DynamicAuthoringSnapshot,
-      ) => Promise<void>)
+      ) => () => Promise<void>)
     | undefined
   private onAuthoringRun:
     ((pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>) | undefined
@@ -483,7 +483,7 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
       request: DynamicCordisDefineRequest,
       receipt: DynamicCordisDefineReceipt,
       snapshot: DynamicAuthoringSnapshot,
-    ) => Promise<void>
+    ) => () => Promise<void>
     readonly run: (pluginId: string, packageId: string, result: DynamicCordisRunResponse) => Promise<void>
     /** Before a candidate starts: a revise candidate takes over the saved version's tools in this Session. */
     readonly beforeRun?: (pluginId: string) => Promise<void> | undefined
@@ -688,7 +688,9 @@ export class NekroNxtDynamicCordisRunner extends DynamicCordisRunnerService {
           permissions: { permissions: [], networkOrigins: [] },
           contributions: [],
         }
-        const persistence = this.authoringPersistenceTail.then(() => persistDefinition(ownedRequest, receipt, snapshot))
+        // Capture the submitting turn before queued artifact writes can outlive it.
+        const submitDefinition = persistDefinition(ownedRequest, receipt, snapshot)
+        const persistence = this.authoringPersistenceTail.then(submitDefinition)
         this.authoringPersistenceTail = persistence.catch(() => undefined)
         this.authoringPersistenceByPackage.set(receipt.packageId, persistence)
         void persistence.catch((error: unknown) => {

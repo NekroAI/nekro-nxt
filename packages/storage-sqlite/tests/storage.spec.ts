@@ -232,6 +232,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD fallback_models text')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions ADD aliases text')
     mutateSqlite(filename, "ALTER TABLE channels ADD preferred_processing_feedback text NOT NULL DEFAULT 'auto'")
+    mutateSqlite(filename, 'ALTER TABLE admissions ADD trigger_event_id text')
     const old = openCoreDatabase(filename)
     const repository = new SqliteCoreRepository(old)
     let sequence = 0
@@ -270,6 +271,7 @@ describe('Core SQLite baseline', () => {
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN fallback_models')
     mutateSqlite(filename, 'ALTER TABLE agent_revisions DROP COLUMN aliases')
     mutateSqlite(filename, 'ALTER TABLE channels DROP COLUMN preferred_processing_feedback')
+    mutateSqlite(filename, 'ALTER TABLE admissions DROP COLUMN trigger_event_id')
     const migrated = await openMigratedCoreDatabase(filename)
     try {
       const current = new SqliteCoreRepository(migrated)
@@ -1735,6 +1737,71 @@ describe('relations, admissions and outbox', () => {
     }
   })
 
+  it('recovers the exact Admission trigger after reopening without guessing legacy triggers', async () => {
+    const f = await createFixture()
+    let database = f.database
+    try {
+      const agent = createAgent(f.core)
+      const channel = f.core.createChannel({
+        connectionId: f.connection.id,
+        platformChannelId: 'trigger-room',
+        kind: 'group',
+      })
+      const events = ['wake', 'later'].map(
+        (name, index) =>
+          f.core.appendInbound({
+            connectionId: f.connection.id,
+            channelId: channel.id,
+            adapterKey: 'fixture-alpha',
+            kind: 'message-created',
+            parts: [{ type: 'text', text: name }],
+            receivedAt: index + 1,
+            platformTimestamp: index + 1,
+            dedupeKey: name,
+          }).event,
+      )
+      const episodeId = EpisodeIdSchema.parse('eps_TRIGGER')
+      f.repository.createEpisode({
+        id: episodeId,
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        agentRevisionId: agent.revision.id,
+        status: 'opening',
+        openedAtEventId: events[0]!.id,
+        createdAt: 3,
+      })
+      f.repository.activateEpisode(episodeId, 'session_trigger')
+      const admissionId = AdmissionIdSchema.parse('adm_TRIGGER')
+      f.repository.createAdmission({
+        id: admissionId,
+        episodeId,
+        eventIds: events.map((event) => event.id),
+        triggerEventId: events[0]!.id,
+        mode: 'followup',
+        state: 'pending',
+        createdAt: 4,
+      })
+      f.repository.createAdmission({
+        id: AdmissionIdSchema.parse('adm_LEGACY'),
+        episodeId,
+        eventIds: [events[1]!.id],
+        mode: 'followup',
+        state: 'pending',
+        createdAt: 5,
+      })
+      database.close()
+      database = await openMigratedCoreDatabase(path.join(f.directory, 'core.sqlite'))
+      const recovered = new SqliteCoreRepository(database).listRecoverableAdmissions(episodeId)
+      expect(recovered.find((record) => record.id === admissionId)).toMatchObject({
+        eventIds: events.map((event) => event.id),
+        triggerEventId: events[0]!.id,
+      })
+      expect(recovered.find((record) => record.id !== admissionId)).not.toHaveProperty('triggerEventId')
+    } finally {
+      database.close()
+    }
+  })
+
   it('persists relational Admission events and structured delivery receipts', async () => {
     const { database, repository, core, connection } = await createFixture()
     try {
@@ -1771,9 +1838,22 @@ describe('relations, admissions and outbox', () => {
         episodeId,
         eventIds: [event.id],
         mode: 'followup',
+        triggerEventId: event.id,
         state: 'pending',
         createdAt: 4,
       })
+      expect(repository.listRecoverableAdmissions(episodeId)[0]?.triggerEventId).toBe(event.id)
+      expect(() =>
+        repository.createAdmission({
+          id: AdmissionIdSchema.parse('adm_FOREIGNTRIGGER'),
+          episodeId,
+          eventIds: [event.id],
+          mode: 'followup',
+          triggerEventId: ChannelEventIdSchema.parse('evt_FOREIGN'),
+          state: 'pending',
+          createdAt: 4,
+        }),
+      ).toThrow('trigger')
       repository.claimAdmission(admissionId)
       repository.completeAdmission(admissionId, 'dsh-message-1', event.id)
 

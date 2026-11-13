@@ -631,6 +631,7 @@ export const admissions = sqliteTable(
       .notNull()
       .references(() => episodes.id, { onDelete: 'restrict' }),
     mode: text({ enum: ['followup', 'inject'] }).notNull(),
+    triggerEventId: text('trigger_event_id').$type<ChannelEventId>(),
     state: text({ enum: ['pending', 'claimed', 'logged-to-session', 'cancelled'] }).notNull(),
     dshMessageId: text('dsh_message_id'),
     createdAt: integer('created_at').notNull(),

@@ -98,6 +98,8 @@ export interface AdmissionRecord {
   readonly episodeId: EpisodeId
   readonly eventIds: readonly ChannelEventId[]
   readonly mode: 'followup' | 'inject'
+  /** The exact event that caused this Admission; absent in older records. */
+  readonly triggerEventId?: ChannelEventId
   readonly state: AdmissionState
   readonly dshMessageId?: string
   readonly createdAt: number
@@ -312,6 +314,8 @@ export interface AgentSessionDriver {
     readonly targetRevision: AgentRevisionRecord
   }): Promise<void>
   sessionStatus(dshSessionId: string): 'idle' | 'running'
+  /** Keep a new channel request out of a host-owned continuation turn. */
+  admissionMode?(dshSessionId: string): AdmissionRecord['mode']
   /** Whether context occupancy warrants idle rollover. Without a measurement, keep the current session. */
   shouldCompactIdleSession?(dshSessionId: string): boolean
   /** Resolves after the current DSH turn and all injected work become idle. */
@@ -342,6 +346,7 @@ export interface AgentSessionDriver {
     readonly admissionId: AdmissionId
     readonly events: readonly ChannelEventRecord[]
     readonly mode: 'followup' | 'inject'
+    readonly triggerEventId?: ChannelEventId
     readonly replyRequired: boolean
     /** Labelled notes keyed by Channel Event, rendered next to that event: NekroNXT's own first, then extensions'. */
     readonly annotations?: ReadonlyMap<ChannelEventId, readonly InboundAnnotation[]>
@@ -1667,6 +1672,7 @@ export class ChannelRuntime {
             admissionId: admission.id,
             events: visible,
             mode: admission.mode,
+            ...(admission.triggerEventId === undefined ? {} : { triggerEventId: admission.triggerEventId }),
             replyRequired: current !== undefined && this.#replyRequired(current, visible),
             ...(annotations.size === 0 ? {} : { annotations }),
           })
@@ -2064,7 +2070,10 @@ export class ChannelRuntime {
         id: admissionId,
         episodeId: episode.id,
         eventIds: candidateEvents.map(({ id }) => id),
-        mode: this.#sessionDriver.sessionStatus(dshSessionId) === 'running' ? 'inject' : 'followup',
+        mode:
+          this.#sessionDriver.admissionMode?.(dshSessionId) ??
+          (this.#sessionDriver.sessionStatus(dshSessionId) === 'running' ? 'inject' : 'followup'),
+        triggerEventId: event.id,
         state: 'pending',
         createdAt: this.#timestamp(),
       })
@@ -2100,6 +2109,7 @@ export class ChannelRuntime {
         admissionId: admission.id,
         events: visible,
         mode: admission.mode,
+        ...(admission.triggerEventId === undefined ? {} : { triggerEventId: admission.triggerEventId }),
         replyRequired: wake.replyRequired === true || this.#replyRequired(binding, visible),
         ...(annotations.size === 0 ? {} : { annotations }),
         ...(wake.note === undefined ? {} : { wakeNote: wake.note }),
@@ -2123,14 +2133,14 @@ export class ChannelRuntime {
   ): readonly ChannelEventRecord[] {
     const candidates = this.#runtimeRepository.listUnadmittedEvents(binding.channelId, binding.agentId, binding.boundAt)
     if (candidates.some(({ id }) => id === current.id)) return candidates
-    // A wake queued behind an earlier turn finds its message already handed over with that turn; only an Admission
-    // still being delivered is picked up again.
+    // A wake queued behind an earlier turn finds its message already handed over with that turn. Its later lane
+    // entry is done; newer candidates wait for their own wake instead of borrowing this wake's requester.
     const handedOver =
       this.#runtimeRepository.isEventAdmitted(binding.channelId, binding.agentId, current.id) &&
       !this.#runtimeRepository
         .listRecoverableAdmissions(episodeId)
         .some((admission) => admission.eventIds.includes(current.id))
-    return handedOver ? candidates : [...candidates, current]
+    return handedOver ? [] : [...candidates, current]
   }
 
   async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {

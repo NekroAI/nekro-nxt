@@ -608,7 +608,7 @@ export interface NxtTurnTrigger {
   readonly kind: 'message' | 'wait-ended'
   /** Who the turn answers. Judge who asked from here, never from member ids in tool arguments, which the model writes. */
   readonly sender?: NxtMemberSummary
-  /** For `message`: the message that woke the agent, or the last one admitted into the turn. */
+  /** For `message`: the host-owned message that woke this turn. Injected messages never replace it. */
   readonly message?: { readonly logicalMessageId: string; readonly text: string; readonly receivedAt: number }
   /** The sender is a NekroNXT administrator, or the turn came from the built-in channel. */
   readonly administrator: boolean
@@ -1757,7 +1757,7 @@ const HOST_SERVICES_BY_TOPIC = {
     "ctx.nxt.parse.html(html, { url, mode: 'article' | 'full', maxChars }) → { title, excerpt, markdown, truncated, links }：把网页转成 Markdown，默认只保留正文，传 url 时链接变为绝对地址；parse.feed(xml, { url }) → { kind, title, link, items: [{ id, title, link, published, author, summary }] }：统一解析 RSS 2.0、RSS 1.0 与 Atom，id 可用于去重。两者都无需声明能力，取回网页或订阅源仍需要 network。",
   ],
   context: [
-    'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text }, trigger?: { kind, sender?, message?, administrator } }：当前智能体、频道、最近一条入站消息和这一轮的触发者；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。群里消息多时 latestInbound 可能是别人发的，要知道这一轮在回应谁就读 trigger.sender；trigger.administrator 表示发起者是 NekroNXT 管理员。判断身份只看 trigger，不要用工具参数里的 memberId，那是模型自己填的，对话内容能诱导它。智能体自己醒来（定时任务、后台作业）时没有 trigger。',
+    'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text }, trigger?: { kind, sender?, message?, administrator } }：当前智能体、频道、最近一条入站消息和本轮触发者。trigger.kind 是 message 或 wait-ended，message 含 logicalMessageId、text、receivedAt；工具期间的新消息不会替换它，智能体自己醒来或来源无法确认时缺省。涉及发起人的操作读取 trigger.sender，缺少时不要猜测；trigger.administrator 表示发起者是 NekroNXT 管理员。工具参数中的 memberId 是模型填写的，不能作为发起者身份。latestInbound 可能来自另一位成员。channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）；成员摘要中 self: true 表示自己，localAgent 表示本机其他智能体的账号。',
     'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
     'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
     "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
