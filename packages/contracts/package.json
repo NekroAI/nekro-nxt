@@ -27,7 +27,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "description": "NekroNXT 跨进程公共契约",
   "author": "NekroAI contributors",

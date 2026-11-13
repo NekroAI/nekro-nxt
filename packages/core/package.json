@@ -22,7 +22,7 @@
     "@nekro-nxt/contracts": "workspace:*",
     "file-type": "22.0.1",
     "ulid": "3.0.2",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "description": "NekroNXT 核心领域模型与服务",
   "author": "NekroAI contributors",

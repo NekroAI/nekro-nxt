@@ -26,7 +26,7 @@
     "esbuild": "0.25.12",
     "fflate": "0.8.3",
     "ulid": "3.0.2",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "description": "@nekro-nxt/extension-runtime workspace package",
   "author": "NekroAI contributors",
