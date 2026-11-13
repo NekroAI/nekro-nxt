@@ -4,8 +4,15 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { verifySubprocessRuntime } from '../../../scripts/lib/runtime-subprocess-smoke.mjs'
+
+// Load Node's real builder exports before tests so Vitest does not transform its large dependency graph.
+const electronBuilder: unknown = createRequire(import.meta.url)('electron-builder')
+if (typeof electronBuilder !== 'object' || electronBuilder === null) {
+  throw new TypeError('electron-builder exports must be an object')
+}
+vi.mock('electron-builder', () => electronBuilder)
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
 
