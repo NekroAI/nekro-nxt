@@ -60,6 +60,20 @@ const asObject = (value: unknown): Json | undefined =>
 const asStrings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string') : []
 
+/** Display name of a config field in the manifest (its description), the key when it has none. */
+const configFieldTitle = (manifest: Readonly<Json>, key: string): string => {
+  const config = asObject(manifest['config'])
+  for (const layer of ['host', 'agent']) {
+    const dict = asObject(asObject(asObject(config?.[layer])?.['schema'])?.['dict'])
+    const title = asObject(asObject(dict?.[key])?.['meta'])?.['description']
+    if (typeof title === 'string' && title.trim() !== '') return title.trim()
+  }
+  return key
+}
+
+/** The text without its closing sentence punctuation, so it can be joined to a following clause. */
+const withoutClosingPunctuation = (text: string): string => text.replace(/[。.！!？?；;，,\s]+$/u, '')
+
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 
 /**
@@ -140,7 +154,11 @@ const KNOWN_CAPABILITIES = new Set([
   'context',
 ])
 
-const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): PermissionItem[] => {
+const capabilityItems = (
+  declaredCapabilities: Json,
+  layer: PermissionLayer,
+  fieldTitle: (key: string) => string,
+): PermissionItem[] => {
   const known = layer === 'host' ? KNOWN_HOST_CAPABILITIES : KNOWN_CAPABILITIES
   // The host layer has network, storage, the asset library, search indexes and model calls; anything else there is
   // reported as unknown below.
@@ -161,13 +179,16 @@ const capabilityItems = (declaredCapabilities: Json, layer: PermissionLayer): Pe
         key: 'network',
         level: 'elevated',
         label: '访问你在配置中填写的地址',
-        detail: asStrings(network['fields']).join('、'),
+        detail: asStrings(network['fields']).map(fieldTitle).join('、'),
       })
     } else {
       const purpose = typeof network['purpose'] === 'string' ? network['purpose'] : undefined
-      const fields = asStrings(network['fields'])
-      const detail = [purpose, fields.length === 0 ? undefined : `配置地址：${fields.join('、')}`]
-        .filter((part): part is string => part !== undefined)
+      const fields = asStrings(network['fields']).map(fieldTitle)
+      const detail = [
+        purpose === undefined ? undefined : fields.length === 0 ? purpose : withoutClosingPunctuation(purpose),
+        fields.length === 0 ? undefined : `配置地址：${fields.join('、')}`,
+      ]
+        .filter((part): part is string => part !== undefined && part !== '')
         .join('；')
       items.push({
         key: 'network',
@@ -351,7 +372,11 @@ export const summarizePermissions = (manifest: Readonly<Json>): PermissionItem[]
           },
     )
   }
-  items.push(...capabilityItems(declared.host, 'host'), ...capabilityItems(declared.agent, 'agent'))
+  const fieldTitle = (key: string): string => configFieldTitle(manifest, key)
+  items.push(
+    ...capabilityItems(declared.host, 'host', fieldTitle),
+    ...capabilityItems(declared.agent, 'agent', fieldTitle),
+  )
   return items
 }
 

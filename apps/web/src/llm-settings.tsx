@@ -536,7 +536,13 @@ export function ModelProviderDetail({
               </span>
             </>
           ) : (
-            <span>{preset ? '推荐的模型中转，兼容 OpenAI 接口' : '连接任意 OpenAI 兼容接口'}</span>
+            <span>
+              {preset
+                ? preset.api === 'anthropic-messages'
+                  ? '推荐的模型中转，走 Anthropic 协议'
+                  : '推荐的模型中转，兼容 OpenAI 接口'
+                : '连接任意 OpenAI 兼容接口'}
+            </span>
           )
         }
       />

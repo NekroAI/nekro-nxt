@@ -39,4 +39,22 @@ describe('permission summary', () => {
       detail: '下载生成的图片；配置地址：baseUrl',
     })
   })
+
+  it('joins the purpose and address fields without doubled punctuation and shows field titles', () => {
+    const [item] = summarizePermissions({
+      permissions: {
+        agent: { network: { mode: 'unrestricted', purpose: '下载生成的图片。', fields: ['endpoint'] } },
+      },
+      config: {
+        agent: {
+          schema: { type: 'object', dict: { endpoint: { type: 'string', meta: { description: '服务地址' } } } },
+        },
+      },
+    })
+    expect(item?.detail).toBe('下载生成的图片；配置地址：服务地址')
+    const [untitled] = summarizePermissions({
+      permissions: { agent: { network: { mode: 'unrestricted', purpose: '下载图片', fields: ['endpoint'] } } },
+    })
+    expect(untitled?.detail).toBe('下载图片；配置地址：endpoint')
+  })
 })

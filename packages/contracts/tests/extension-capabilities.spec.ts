@@ -346,6 +346,12 @@ describe('summarizeExtensionCapabilities', () => {
       label: '访问任意公网地址和你在配置中填写的地址',
       detail: '下载生成的图片；配置地址：服务地址',
     })
+    expect(
+      summarizeExtensionCapabilities(
+        caps({ network: { mode: 'unrestricted', purpose: '下载生成的图片。', fields: ['baseUrl'] } }),
+        { fieldTitle: () => '服务地址' },
+      )[0]?.detail,
+    ).toBe('下载生成的图片；配置地址：服务地址')
     expect(() => caps({ network: { mode: 'unrestricted', purpose: '下载生成的图片', fields: [] } })).toThrow()
   })
 })

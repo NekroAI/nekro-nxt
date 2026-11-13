@@ -777,7 +777,7 @@ export const summarizeExtensionCapabilities = (
       detail:
         network.fields === undefined
           ? network.purpose
-          : `${network.purpose}；配置地址：${network.fields.map((field) => options.fieldTitle?.(field) ?? field).join('、')}`,
+          : `${network.purpose.replace(/[。.！!？?；;，,\s]+$/u, '')}；配置地址：${network.fields.map((field) => options.fieldTitle?.(field) ?? field).join('、')}`,
     })
   }
   if (capabilities.storage !== undefined && options.layer === 'host') {
