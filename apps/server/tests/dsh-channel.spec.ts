@@ -715,7 +715,7 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and internal Channel vertical slice', () => {
-  it('supports multi-stage sends, enforces two reply corrections, and projects protocol failure after a third miss', async () => {
+  describe('channel reply obligations and turn completion', () => {
     const runScenario = async (
       model: ScriptedCommunicationModel,
       suffix: string,
@@ -812,248 +812,270 @@ describe('DSH Host and internal Channel vertical slice', () => {
       }
     }
 
-    const recovered = await runScenario(new ReplyGuardThenSendModel(), 'RECOVERED')
-    try {
-      expect(recovered.sentParts).toEqual([[{ type: 'text', text: '守卫提醒后的真实回复。' }]])
-      expect(
-        recovered.events.filter(
-          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
-        ),
-      ).toHaveLength(1)
-      expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
-      expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
-      expect(JSON.stringify(recovered.events)).toContain('刚才写的文字大家看不到')
-      expect(JSON.stringify(recovered.events)).not.toContain('replyRequired')
-    } finally {
-      await recovered.host.dispose()
-      recovered.database.close()
-    }
-
-    const multiStage = await runScenario(new MultiStageCommunicationModel(), 'MULTISTAGE')
-    try {
-      expect(multiStage.sentParts).toEqual([
-        [{ type: 'text', text: '我已经开始处理。' }],
-        [{ type: 'text', text: '已经确认当前频道。' }],
-        [{ type: 'text', text: '处理完成。' }],
-      ])
-      expect(
-        multiStage.events.filter(
-          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
-        ),
-      ).toHaveLength(0)
-      expect(multiStage.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
-      expect(JSON.stringify(multiStage.events)).toContain('多阶段发送后的内部结束文字。')
-    } finally {
-      await multiStage.host.dispose()
-      multiStage.database.close()
-    }
-
-    const quiet = await runScenario(
-      new FinalOnlyCommunicationModel('quiet-final', '安静执行后的最终结果。', '只发送最终结果'),
-      'QUIET',
-      '只发送最终结果，不发送开场确认或过程消息。',
-    )
-    try {
-      expect(quiet.sentParts).toEqual([[{ type: 'text', text: '安静执行后的最终结果。' }]])
-      expect(
-        quiet.events.filter(
-          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
-        ),
-      ).toHaveLength(0)
-      expect(quiet.projection.turns).toHaveLength(1)
-      expect(quiet.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
-    } finally {
-      await quiet.host.dispose()
-      quiet.database.close()
-    }
-
-    const quick = await runScenario(
-      new FinalOnlyCommunicationModel('quick-final', '快速任务的直接结果。', '直接给出结果'),
-      'QUICK',
-      '这是快速任务，直接给出结果，不添加寒暄。',
-    )
-    try {
-      expect(quick.sentParts).toEqual([[{ type: 'text', text: '快速任务的直接结果。' }]])
-      expect(
-        quick.events.filter(
-          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
-        ),
-      ).toHaveLength(0)
-      expect(quick.projection.turns).toHaveLength(1)
-      expect(quick.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
-    } finally {
-      await quick.host.dispose()
-      quick.database.close()
-    }
-
-    const explicitlyFinished = await runScenario(new FinishChannelTurnModel(), 'FINISHED')
-    try {
-      expect(explicitlyFinished.sentParts).toEqual([])
-      expect(explicitlyFinished.projection.turns[0]).toMatchObject({
-        state: 'completed',
-        responseState: 'finished',
-        producedReply: false,
-      })
-      expect(explicitlyFinished.projection.summary).toBe('智能体这一轮没有回复。')
-      expect(explicitlyFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(1)
-      expect(explicitlyFinished.projection.turns[0]?.steps[0]?.tools[0]?.resultPreview).toContain(
-        '测试场景明确保持静默。',
-      )
-    } finally {
-      await explicitlyFinished.host.dispose()
-      explicitlyFinished.database.close()
-    }
-
-    const claimedBeforeSending = await runScenario(new ClaimedReplyModel(), 'CLAIMEDREPLY')
-    try {
-      expect(claimedBeforeSending.sentParts).toEqual([[{ type: 'text', text: '真正发出的回复。' }]])
-      const claimResult = claimedBeforeSending.events.find(
-        (event) => event.type === 'tool/result' && String(event.data.message.toolCallId) === 'claim-early',
-      )
-      expect(claimResult?.type === 'tool/result' ? claimResult.data.message : undefined).toMatchObject({
-        isError: true,
-      })
-      expect(JSON.stringify(claimResult)).toContain('你还没有发出任何消息')
-      expect(claimedBeforeSending.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
-    } finally {
-      await claimedBeforeSending.host.dispose()
-      claimedBeforeSending.database.close()
-    }
-
-    const invalidThenFinished = await runScenario(new FinishChannelTurnModel(true), 'INVALIDFINISH')
-    try {
-      expect(invalidThenFinished.sentParts).toEqual([])
-      expect(invalidThenFinished.projection.turns[0]).toMatchObject({
-        state: 'completed',
-        responseState: 'finished',
-        producedReply: false,
-      })
-      const invalidResult = invalidThenFinished.events.find((event) => event.type === 'tool/result')
-      expect(invalidResult?.type === 'tool/result' ? invalidResult.data.message : undefined).toMatchObject({
-        isError: true,
-      })
-      expect(invalidThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
-    } finally {
-      await invalidThenFinished.host.dispose()
-      invalidThenFinished.database.close()
-    }
-
-    const unknownThenFinished = await runScenario(
-      new FinishChannelTurnModel(false, true),
-      'UNKNOWNFINISH',
-      '回复频道消息。',
-      'unknown',
-    )
-    try {
-      expect(unknownThenFinished.sentParts).toEqual([[{ type: 'text', text: '投递状态未知。' }]])
-      expect(unknownThenFinished.projection.turns[0]).toMatchObject({
-        state: 'completed',
-        responseState: 'finished',
-        producedReply: false,
-      })
-      expect(unknownThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
-        deliveryState: 'unknown',
-        wroteToChannel: false,
-      })
-      expect(unknownThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
-    } finally {
-      await unknownThenFinished.host.dispose()
-      unknownThenFinished.database.close()
-    }
-
-    const partiallySentThenFinished = await runScenario(
-      new FinishChannelTurnModel(false, true),
-      'PARTIALFINISH',
-      '回复频道消息。',
-      'partially-sent',
-    )
-    try {
-      expect(partiallySentThenFinished.projection.turns[0]).toMatchObject({
-        responseState: 'finished',
-        producedReply: true,
-      })
-      expect(partiallySentThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
-        deliveryState: 'partially-sent',
-        wroteToChannel: true,
-      })
-    } finally {
-      await partiallySentThenFinished.host.dispose()
-      partiallySentThenFinished.database.close()
-    }
-
-    const failedThenFinished = await runScenario(
-      new FinishChannelTurnModel(false, true),
-      'FAILEDFINISH',
-      '回复频道消息。',
-      'failed',
-    )
-    try {
-      expect(failedThenFinished.projection.turns[0]).toMatchObject({
-        responseState: 'finished',
-        producedReply: false,
-      })
-      expect(failedThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
-        deliveryState: 'failed',
-        wroteToChannel: false,
-      })
-    } finally {
-      await failedThenFinished.host.dispose()
-      failedThenFinished.database.close()
-    }
-
-    const missed = await runScenario(new ReplyGuardNeverSendModel(), 'MISSED')
-    let missedHostDisposed = false
-    try {
-      expect(missed.sentParts).toEqual([])
-      expect(
-        missed.events.filter(
-          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
-        ),
-      ).toHaveLength(2)
-      expect(missed.projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
-      expect(missed.projection.summary).toBe('智能体这一轮既没有回复，也没有说明原因。')
-      await missed.host.dispose()
-      missedHostDisposed = true
-      const resumed = await DshHostRuntime.create({
-        sessionDatabasePath: path.join(missed.directory, 'sessions.sqlite'),
-        communication: { sendMessage: () => Promise.reject(new Error('Unexpected resumed communication call.')) },
-        history: missed.repository,
-        assets: missed.repository,
-        assetService: missed.assetService,
-        resolveAgentRevision: (revisionId) => missed.repository.getAgentRevision(revisionId),
-        configureLlm: (context) => {
-          context.llm.registerAdapter(['test-provider'], new ReplyGuardNeverSendModel())
-        },
-      })
+    it('recovers a reply after one guard reminder and keeps internal text in the trace', async () => {
+      const recovered = await runScenario(new ReplyGuardThenSendModel(), 'RECOVERED')
       try {
-        await expect(
-          resumed.createSession({
-            episodeId: missed.episodeId,
-            channelId: missed.channel.id,
-            agentId: missed.definition.definition.id,
-            agentRevisionId: missed.definition.revision.id,
-          }),
-        ).resolves.toBe(missed.sessionId)
-        const resumedProjection = projectChannelRuntime({
-          channelId: missed.channel.id,
-          agentId: missed.definition.definition.id,
-          episodeId: missed.episodeId,
-          sessionStatus: resumed.sessionStatus(missed.sessionId),
-          pendingInjectCount: 0,
-          events: resumed.normalizedSessionEvents(missed.sessionId),
-        })
-        expect(resumedProjection.turns[0]).toMatchObject({
+        expect(recovered.sentParts).toEqual([[{ type: 'text', text: '守卫提醒后的真实回复。' }]])
+        expect(
+          recovered.events.filter(
+            (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+          ),
+        ).toHaveLength(1)
+        expect(recovered.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+        expect(JSON.stringify(recovered.events)).toContain('发送后的内部结束文字。')
+        expect(JSON.stringify(recovered.events)).toContain('刚才写的文字大家看不到')
+        expect(JSON.stringify(recovered.events)).not.toContain('replyRequired')
+      } finally {
+        await recovered.host.dispose()
+        recovered.database.close()
+      }
+    })
+
+    it('sends multiple messages in one turn without reply guard reminders', async () => {
+      const multiStage = await runScenario(new MultiStageCommunicationModel(), 'MULTISTAGE')
+      try {
+        expect(multiStage.sentParts).toEqual([
+          [{ type: 'text', text: '我已经开始处理。' }],
+          [{ type: 'text', text: '已经确认当前频道。' }],
+          [{ type: 'text', text: '处理完成。' }],
+        ])
+        expect(
+          multiStage.events.filter(
+            (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+          ),
+        ).toHaveLength(0)
+        expect(multiStage.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+        expect(JSON.stringify(multiStage.events)).toContain('多阶段发送后的内部结束文字。')
+      } finally {
+        await multiStage.host.dispose()
+        multiStage.database.close()
+      }
+    })
+
+    it('sends only the final result when the persona asks for quiet execution', async () => {
+      const quiet = await runScenario(
+        new FinalOnlyCommunicationModel('quiet-final', '安静执行后的最终结果。', '只发送最终结果'),
+        'QUIET',
+        '只发送最终结果，不发送开场确认或过程消息。',
+      )
+      try {
+        expect(quiet.sentParts).toEqual([[{ type: 'text', text: '安静执行后的最终结果。' }]])
+        expect(
+          quiet.events.filter(
+            (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+          ),
+        ).toHaveLength(0)
+        expect(quiet.projection.turns).toHaveLength(1)
+        expect(quiet.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+      } finally {
+        await quiet.host.dispose()
+        quiet.database.close()
+      }
+    })
+
+    it('sends a direct final result for a quick task', async () => {
+      const quick = await runScenario(
+        new FinalOnlyCommunicationModel('quick-final', '快速任务的直接结果。', '直接给出结果'),
+        'QUICK',
+        '这是快速任务，直接给出结果，不添加寒暄。',
+      )
+      try {
+        expect(quick.sentParts).toEqual([[{ type: 'text', text: '快速任务的直接结果。' }]])
+        expect(
+          quick.events.filter(
+            (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+          ),
+        ).toHaveLength(0)
+        expect(quick.projection.turns).toHaveLength(1)
+        expect(quick.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+      } finally {
+        await quick.host.dispose()
+        quick.database.close()
+      }
+    })
+
+    it('finishes a silent turn explicitly without sending a channel message', async () => {
+      const explicitlyFinished = await runScenario(new FinishChannelTurnModel(), 'FINISHED')
+      try {
+        expect(explicitlyFinished.sentParts).toEqual([])
+        expect(explicitlyFinished.projection.turns[0]).toMatchObject({
           state: 'completed',
-          responseState: 'not-required',
+          responseState: 'finished',
           producedReply: false,
         })
+        expect(explicitlyFinished.projection.summary).toBe('智能体这一轮没有回复。')
+        expect(explicitlyFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(1)
+        expect(explicitlyFinished.projection.turns[0]?.steps[0]?.tools[0]?.resultPreview).toContain(
+          '测试场景明确保持静默。',
+        )
       } finally {
-        await resumed.dispose()
+        await explicitlyFinished.host.dispose()
+        explicitlyFinished.database.close()
       }
-    } finally {
-      if (!missedHostDisposed) await missed.host.dispose()
-      missed.database.close()
-    }
+    })
+
+    it('rejects a reply claim made before any message is sent', async () => {
+      const claimedBeforeSending = await runScenario(new ClaimedReplyModel(), 'CLAIMEDREPLY')
+      try {
+        expect(claimedBeforeSending.sentParts).toEqual([[{ type: 'text', text: '真正发出的回复。' }]])
+        const claimResult = claimedBeforeSending.events.find(
+          (event) => event.type === 'tool/result' && String(event.data.message.toolCallId) === 'claim-early',
+        )
+        expect(claimResult?.type === 'tool/result' ? claimResult.data.message : undefined).toMatchObject({
+          isError: true,
+        })
+        expect(JSON.stringify(claimResult)).toContain('你还没有发出任何消息')
+        expect(claimedBeforeSending.projection.turns[0]).toMatchObject({ state: 'completed', producedReply: true })
+      } finally {
+        await claimedBeforeSending.host.dispose()
+        claimedBeforeSending.database.close()
+      }
+    })
+
+    it('recovers from an invalid finish_channel_turn outcome', async () => {
+      const invalidThenFinished = await runScenario(new FinishChannelTurnModel(true), 'INVALIDFINISH')
+      try {
+        expect(invalidThenFinished.sentParts).toEqual([])
+        expect(invalidThenFinished.projection.turns[0]).toMatchObject({
+          state: 'completed',
+          responseState: 'finished',
+          producedReply: false,
+        })
+        const invalidResult = invalidThenFinished.events.find((event) => event.type === 'tool/result')
+        expect(invalidResult?.type === 'tool/result' ? invalidResult.data.message : undefined).toMatchObject({
+          isError: true,
+        })
+        expect(invalidThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
+      } finally {
+        await invalidThenFinished.host.dispose()
+        invalidThenFinished.database.close()
+      }
+    })
+
+    it('finishes a turn without crediting an unknown delivery as a reply', async () => {
+      const unknownThenFinished = await runScenario(
+        new FinishChannelTurnModel(false, true),
+        'UNKNOWNFINISH',
+        '回复频道消息。',
+        'unknown',
+      )
+      try {
+        expect(unknownThenFinished.sentParts).toEqual([[{ type: 'text', text: '投递状态未知。' }]])
+        expect(unknownThenFinished.projection.turns[0]).toMatchObject({
+          state: 'completed',
+          responseState: 'finished',
+          producedReply: false,
+        })
+        expect(unknownThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+          deliveryState: 'unknown',
+          wroteToChannel: false,
+        })
+        expect(unknownThenFinished.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
+      } finally {
+        await unknownThenFinished.host.dispose()
+        unknownThenFinished.database.close()
+      }
+    })
+
+    it('credits a partial delivery as a reply', async () => {
+      const partiallySentThenFinished = await runScenario(
+        new FinishChannelTurnModel(false, true),
+        'PARTIALFINISH',
+        '回复频道消息。',
+        'partially-sent',
+      )
+      try {
+        expect(partiallySentThenFinished.projection.turns[0]).toMatchObject({
+          responseState: 'finished',
+          producedReply: true,
+        })
+        expect(partiallySentThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+          deliveryState: 'partially-sent',
+          wroteToChannel: true,
+        })
+      } finally {
+        await partiallySentThenFinished.host.dispose()
+        partiallySentThenFinished.database.close()
+      }
+    })
+
+    it('keeps a failed delivery from counting as a reply', async () => {
+      const failedThenFinished = await runScenario(
+        new FinishChannelTurnModel(false, true),
+        'FAILEDFINISH',
+        '回复频道消息。',
+        'failed',
+      )
+      try {
+        expect(failedThenFinished.projection.turns[0]).toMatchObject({
+          responseState: 'finished',
+          producedReply: false,
+        })
+        expect(failedThenFinished.projection.turns[0]?.steps[0]?.tools[0]).toMatchObject({
+          deliveryState: 'failed',
+          wroteToChannel: false,
+        })
+      } finally {
+        await failedThenFinished.host.dispose()
+        failedThenFinished.database.close()
+      }
+    })
+
+    it('enforces two reply corrections and clears the obligation after a Host restart', async () => {
+      const missed = await runScenario(new ReplyGuardNeverSendModel(), 'MISSED')
+      let missedHostDisposed = false
+      try {
+        expect(missed.sentParts).toEqual([])
+        expect(
+          missed.events.filter(
+            (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+          ),
+        ).toHaveLength(2)
+        expect(missed.projection.turns[0]).toMatchObject({ state: 'unreplied', producedReply: false })
+        expect(missed.projection.summary).toBe('智能体这一轮既没有回复，也没有说明原因。')
+        await missed.host.dispose()
+        missedHostDisposed = true
+        const resumed = await DshHostRuntime.create({
+          sessionDatabasePath: path.join(missed.directory, 'sessions.sqlite'),
+          communication: { sendMessage: () => Promise.reject(new Error('Unexpected resumed communication call.')) },
+          history: missed.repository,
+          assets: missed.repository,
+          assetService: missed.assetService,
+          resolveAgentRevision: (revisionId) => missed.repository.getAgentRevision(revisionId),
+          configureLlm: (context) => {
+            context.llm.registerAdapter(['test-provider'], new ReplyGuardNeverSendModel())
+          },
+        })
+        try {
+          await expect(
+            resumed.createSession({
+              episodeId: missed.episodeId,
+              channelId: missed.channel.id,
+              agentId: missed.definition.definition.id,
+              agentRevisionId: missed.definition.revision.id,
+            }),
+          ).resolves.toBe(missed.sessionId)
+          const resumedProjection = projectChannelRuntime({
+            channelId: missed.channel.id,
+            agentId: missed.definition.definition.id,
+            episodeId: missed.episodeId,
+            sessionStatus: resumed.sessionStatus(missed.sessionId),
+            pendingInjectCount: 0,
+            events: resumed.normalizedSessionEvents(missed.sessionId),
+          })
+          expect(resumedProjection.turns[0]).toMatchObject({
+            state: 'completed',
+            responseState: 'not-required',
+            producedReply: false,
+          })
+        } finally {
+          await resumed.dispose()
+        }
+      } finally {
+        if (!missedHostDisposed) await missed.host.dispose()
+        missed.database.close()
+      }
+    })
   })
 
   it('does not let an early send satisfy a later required Admission while ordinary injects keep the Turn open', async () => {
@@ -2080,31 +2102,34 @@ describe('DSH Host and internal Channel vertical slice', () => {
         ),
       )
       const [creationTools, shellTools, fileTools, completeTools] = sessions.map((session) => host.toolNames(session))
+      const shellTool = process.platform === 'win32' ? 'pwsh' : 'bash'
 
       expect(creationTools).toContain('cordis_define')
       expect(creationTools).toContain('nekro_nxt_extension_define')
-      expect(creationTools).not.toContain('bash')
+      expect(creationTools).not.toContain(shellTool)
       expect(creationTools).not.toContain('read')
 
-      expect(shellTools).toContain('bash')
+      expect(shellTools).toContain(shellTool)
       expect(shellTools).not.toEqual(expect.arrayContaining(['read', 'write', 'edit']))
       expect(shellTools).not.toContain('cordis_define')
       expect(shellTools).not.toContain('nekro_nxt_extension_define')
 
       expect(fileTools).toEqual(expect.arrayContaining(['read', 'write', 'edit']))
-      expect(fileTools).not.toContain('bash')
+      expect(fileTools).not.toContain(shellTool)
       expect(fileTools).not.toContain('cordis_define')
       expect(fileTools).not.toContain('nekro_nxt_extension_define')
 
-      expect(completeTools).toEqual(expect.arrayContaining(['bash', 'read', 'write', 'edit']))
+      expect(completeTools).toEqual(expect.arrayContaining([shellTool, 'read', 'write', 'edit']))
       expect(completeTools).not.toContain('cordis_define')
       expect(completeTools).not.toContain('nekro_nxt_extension_define')
 
       await expect(access(path.join(workspaceRoot, definitions[0]!.definition.id))).rejects.toThrow()
       for (const agent of definitions.slice(1)) {
         const workspace = path.join(workspaceRoot, agent.definition.id)
-        expect((await stat(workspace)).isDirectory()).toBe(true)
-        expect((await stat(workspace)).mode & 0o777).toBe(0o700)
+        const workspaceInfo = await stat(workspace)
+        expect(workspaceInfo.isDirectory()).toBe(true)
+        if (process.platform === 'win32') expect(workspaceInfo.mode & 0o200).toBe(0o200)
+        else expect(workspaceInfo.mode & 0o777).toBe(0o700)
       }
       expect(new Set(definitions.slice(1).map((agent) => path.join(workspaceRoot, agent.definition.id))).size).toBe(3)
     } finally {
