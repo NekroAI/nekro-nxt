@@ -33,6 +33,8 @@ async function runFinalize(t, { buildResult = 'success', mainCommit = release.co
   const previousArgv = process.argv
   const previousEnvironment = new Map(['GITHUB_OUTPUT', 'GITHUB_REPOSITORY'].map((name) => [name, process.env[name]]))
   const ghCalls = []
+  // The script's progress lines would share stdout with the test runner's own messages.
+  t.mock.method(console, 'log', () => {})
   t.mock.method(childProcess, 'execFileSync', (command, args) => {
     assert.equal(command, 'git')
     if (args.join(' ') === 'rev-parse HEAD') return release.commit
@@ -107,12 +109,20 @@ test('a successful same-commit Preview rerun can retry documentation without rep
 
 test('Preview CI gates documentation on the finalization publication output', async () => {
   const workflow = await readFile(new URL('../../.github/workflows/ci.yml', import.meta.url), 'utf8')
-  const finalize = workflow.split('      - name: Verify and publish all platforms\n')[1]?.split('      - ')[0]
+  const job = (name) => workflow.split(`\n  ${name}:\n`)[1]?.split(/\n {2}\S/u)[0]
+  // The docs-only job reuses these step names, so each job is read on its own.
+  const finalizeJob = job('preview-finalize')
+  const finalize = finalizeJob?.split('      - name: Verify and publish all platforms\n')[1]?.split('      - ')[0]
   assert.match(finalize, /^ {8}id: finalize\n/mu)
   for (const name of ['Download documentation screenshots', 'Publish Preview documentation']) {
-    const step = workflow.split(`      - name: ${name}\n`)[1]?.split('      - ')[0]
+    const step = finalizeJob.split(`      - name: ${name}\n`)[1]?.split('      - ')[0]
     assert.match(step, /if: \$\{\{ steps\.finalize\.outputs\.published == 'true' && vars\.R2_ACCOUNT_ID != '' \}\}/u)
   }
+  // Without installers there is no finalization step: the docs-only job waits for the checks and the docs-only result.
+  assert.match(
+    job('preview-docs'),
+    /^ {4}if: always\(\) && needs\.all-checks-passed\.result == 'success' && needs\.preview-prepare\.outputs\.docs == 'true' && vars\.R2_ACCOUNT_ID != ''\n/mu,
+  )
 })
 
 test('rolling Preview exposes only the four platform installers', () => {
