@@ -30,3 +30,45 @@ describe('approval digest of media, commands and speech', () => {
     ).toBe(false)
   })
 })
+
+describe('outbound permission approval', () => {
+  it.each(['read', 'transform', 'cancel'] as const)('requires an explicit grant for outbound %s', (capability) => {
+    const requested = declaration({ outbound: { [capability]: true, timeoutMs: 1000 } })
+    const missing = permissionRequirement(requested, undefined)
+    expect(missing.approvalRequired).toBe(true)
+    expect(missing.declaration.capabilities?.outbound).toEqual(requested.capabilities.outbound)
+    expect(missing.permissionDigest).not.toBe(hostUiPermissionDigest(declaration({})))
+
+    // Older grants that omitted outbound do not authorize it during activation or restoration.
+    const prior = {
+      ownerKey: 'activation:agt_FIXTURE:ext_FIXTURE',
+      artifactDigest: 'a'.repeat(64),
+      permissionDigest: hostUiPermissionDigest(declaration({})),
+      declaration: declaration({}),
+      approvedAt: 1,
+    }
+    expect(permissionRequirement(requested, prior).approvalRequired).toBe(true)
+    expect(permissionRequirement(requested, { ...prior, declaration: missing.declaration }).approvalRequired).toBe(
+      false,
+    )
+  })
+
+  it('requires renewed approval for outbound expansion and failure cancellation, but permits narrowing', () => {
+    const requested = declaration({ outbound: { read: true, timeoutMs: 1000, onTimeout: 'send' } })
+    const prior = {
+      ownerKey: 'activation:agt_FIXTURE:ext_FIXTURE',
+      artifactDigest: 'a'.repeat(64),
+      permissionDigest: hostUiPermissionDigest(requested),
+      declaration: permissionRequirement(requested, undefined).declaration,
+      approvedAt: 1,
+    }
+    for (const outbound of [
+      { read: true as const, transform: true as const, timeoutMs: 1000 },
+      { read: true as const, cancel: true as const, timeoutMs: 1000 },
+      { read: true as const, timeoutMs: 1000, onTimeout: 'cancel' as const },
+    ]) {
+      expect(permissionRequirement(declaration({ outbound }), prior).approvalRequired).toBe(true)
+    }
+    expect(permissionRequirement(declaration({}), prior).approvalRequired).toBe(false)
+  })
+})
