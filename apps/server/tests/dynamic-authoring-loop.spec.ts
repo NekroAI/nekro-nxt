@@ -553,6 +553,8 @@ describe('dynamic authoring closed loop', () => {
     const webContext = new Context()
     const importContext = new Context()
     const imported = await createRuntime()
+    let api: ReturnType<typeof createNekroHostApi> | undefined
+    let importApi: ReturnType<typeof createNekroHostApi> | undefined
     try {
       const withoutSample = runtime.host.defineDynamicAuthoringPackage(dshSessionId, {
         ...definition,
@@ -584,7 +586,7 @@ describe('dynamic authoring closed loop', () => {
         description: '带必填参数的工具。',
       })
       await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-      const api = createNekroHostApi(webContext.webServer, runtime)
+      api = createNekroHostApi(webContext.webServer, runtime)
       const archive = new Uint8Array(
         await (
           await fetch(
@@ -594,7 +596,7 @@ describe('dynamic authoring closed loop', () => {
       )
 
       await importContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-      const importApi = createNekroHostApi(importContext.webServer, imported)
+      importApi = createNekroHostApi(importContext.webServer, imported)
       const importOrigin = `http://127.0.0.1:${importApi.port}`
       const inspection = HostApiContracts.inspectExtensionImport.parseResponse(
         await (
@@ -615,6 +617,8 @@ describe('dynamic authoring closed loop', () => {
         toolInvocations: [{ name: 'project_status', succeeded: true }],
       })
     } finally {
+      api?.dispose()
+      importApi?.dispose()
       await webContext.fiber.dispose()
       await importContext.fiber.dispose()
       await imported.dispose()
@@ -1117,14 +1121,16 @@ return { inject: ['nxt'], apply() {} }`
       expect((await runtime.authoringTestConfig.describe(task.id)).configured).toEqual([])
       expect(runtime.repository.getAuthoringTask(task.id)).toBeDefined()
       const webContext = new Context()
+      let api: ReturnType<typeof createNekroHostApi> | undefined
       try {
         await webContext.plugin(WebServer, { host: '127.0.0.1', port: 0 })
-        const api = createNekroHostApi(webContext.webServer, runtime)
+        api = createNekroHostApi(webContext.webServer, runtime)
         const snapshot = HostApiContracts.snapshot.parseResponse(
           await (await fetch(`http://127.0.0.1:${api.port}/api/snapshot`)).json(),
         )
         expect(snapshot.authoringTasks.map(({ id }) => id)).not.toContain(task.id)
       } finally {
+        api?.dispose()
         await webContext.fiber.dispose()
       }
     } finally {
