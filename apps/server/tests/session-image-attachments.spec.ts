@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
@@ -217,8 +217,10 @@ describe('NekroAssetAttachmentStore', () => {
       ] as const
       const target = { width: 2048, height: 2048, maxBytes: 8 * 1024 * 1024 }
       const versions: RequestImageAttachment[] = []
+      const blobPaths: string[] = []
       for (const source of sources) {
         const { asset } = await assetService.prepare(source)
+        blobPaths.push(assetService.blobPath(asset))
         for (const detail of ['low', 'auto'] as const) {
           versions.push(await store.readImageRequest(await store.refForAsset(asset, undefined, detail), target))
         }
@@ -259,6 +261,37 @@ describe('NekroAssetAttachmentStore', () => {
 
       expect(firstUploads).toBe(new Set(versions.map((version) => version.variantId)).size)
       expect(uploads - firstUploads).toBe(0)
+      // Metadata reads and uploads must release every source blob before callers can delete it.
+      await Promise.all(blobPaths.map((blobPath) => rm(blobPath)))
+    } finally {
+      database.close()
+    }
+  })
+
+  it('rejects oversized or changed image blobs before reading their metadata', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-image-size-'))
+    roots.push(root)
+    const database = await openMigratedCoreDatabase(':memory:')
+    try {
+      const repository = new SqliteCoreRepository(database)
+      const assetService = new AssetService(repository, path.join(root, 'assets'))
+      const { asset } = await assetService.prepare({
+        bytes: await sharp({ create: { width: 2, height: 2, channels: 3, background: '#4a7' } })
+          .png()
+          .toBuffer(),
+      })
+      const store = new NekroAssetAttachmentStore(new Context(), {
+        assets: repository,
+        assetService,
+        requestImageRoot: path.join(root, 'request-images'),
+      })
+      await expect(store.refForAsset({ ...asset, byteSize: store.imageLimits.maxImageBytes + 1 })).rejects.toThrow(
+        '图片超过 128 MB',
+      )
+      const blobPath = assetService.blobPath(asset)
+      await writeFile(blobPath, 'changed fixture image')
+      await expect(store.refForAsset(asset)).rejects.toThrow('图片文件大小与资源记录不一致')
+      await rm(blobPath)
     } finally {
       database.close()
     }
