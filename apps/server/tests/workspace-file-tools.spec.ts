@@ -5,10 +5,12 @@ import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import { strToU8, zipSync } from 'fflate'
+import type * as FileOperations from 'node:fs'
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -17,7 +19,7 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   cleanTrash,
   copyFileEntry,
@@ -34,8 +36,23 @@ import {
 } from '../src/workspace-file-tools.ts'
 import { mountDevelopmentCapabilities } from '../src/index.ts'
 
+const archiveOpenRace = vi.hoisted(() => ({
+  beforeOpen: undefined as ((target: string) => void) | undefined,
+}))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof FileOperations>()
+  return {
+    ...actual,
+    createWriteStream: (...args: Parameters<typeof actual.createWriteStream>) => {
+      archiveOpenRace.beforeOpen?.(String(args[0]))
+      return actual.createWriteStream(...args)
+    },
+  }
+})
+
 const directories: string[] = []
 afterEach(() => {
+  archiveOpenRace.beforeOpen = undefined
   for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true })
 })
 
@@ -152,6 +169,22 @@ describe('inspecting and comparing', () => {
 })
 
 describe('zip and unzip', () => {
+  it('preserves a competing archive created after preflight when exclusive open fails', async () => {
+    const { workspace, scope, file } = fixture()
+    file('source.txt', 'original source')
+    const target = path.join(workspace, 'pack.zip')
+    const competingArchive = 'synthetic competing archive'
+    archiveOpenRace.beforeOpen = (openedTarget) => {
+      expect(openedTarget).toBe(target)
+      writeFileSync(target, competingArchive, { flag: 'wx' })
+    }
+
+    await expect(zipEntry(scope, 'source.txt', 'pack.zip')).rejects.toMatchObject({ code: 'EEXIST' })
+
+    expect(readFileSync(target, 'utf8')).toBe(competingArchive)
+    expect(readFileSync(path.join(workspace, 'source.txt'), 'utf8')).toBe('original source')
+  })
+
   it('round-trips a folder and leaves links out', async () => {
     const { workspace, outside, scope, file } = fixture()
     file('pack/a.txt', 'alpha')
@@ -162,6 +195,9 @@ describe('zip and unzip', () => {
     expect(readFileSync(path.join(workspace, 'out/pack/sub/b.txt'), 'utf8')).toBe('beta')
     expect(existsSync(path.join(workspace, 'out/pack/link'))).toBe(false)
     await expect(unzipEntry(scope, 'pack.zip', 'out')).rejects.toThrow('已经存在')
+    // Completion owns no archive or output handles, including on Windows.
+    rmSync(path.join(workspace, 'pack.zip'))
+    rmSync(path.join(workspace, 'out'), { recursive: true })
   })
 
   it('refuses an archive whose entry would land outside, and leaves nothing behind', async () => {
@@ -174,6 +210,7 @@ describe('zip and unzip', () => {
     expect(existsSync(path.join(outside, 'evil.txt'))).toBe(false)
     expect(existsSync(path.join(workspace, 'evil'))).toBe(false)
     expect(existsSync(path.join(workspace, 'outside'))).toBe(false)
+    expect(readdirSync(workspace).filter((name) => name.startsWith('.unzip-'))).toEqual([])
   })
 
   it('reads GBK names from archives made on Chinese Windows', async () => {
