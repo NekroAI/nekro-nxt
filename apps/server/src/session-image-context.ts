@@ -48,7 +48,7 @@ import type {
   ChannelEventRecord,
 } from '@nekro-nxt/core'
 import { createHash } from 'node:crypto'
-import { readFile } from 'node:fs/promises'
+import { open, readFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { z } from 'zod'
@@ -218,7 +218,25 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     detail: 'low' | 'auto' | 'high' = 'auto',
   ): Promise<ImageAttachmentRef> {
     const mediaType = DshImageMediaTypeSchema.parse(asset.mediaType)
-    const metadata = await sharp(this.assetService.blobPath(asset)).metadata()
+    if (!Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) throw new Error('图片资源大小无效。')
+    if (asset.byteSize > this.imageLimits.maxImageBytes) throw new Error('图片超过 128 MB，无法读取。')
+    const file = await open(this.assetService.blobPath(asset), 'r')
+    let data: Buffer
+    try {
+      const info = await file.stat()
+      if (!info.isFile() || info.size !== asset.byteSize) throw new Error('图片文件大小与资源记录不一致。')
+      data = Buffer.allocUnsafe(info.size)
+      let offset = 0
+      while (offset < data.byteLength) {
+        const { bytesRead } = await file.read(data, offset, data.byteLength - offset, offset)
+        if (bytesRead === 0) throw new Error('图片文件大小与资源记录不一致。')
+        offset += bytesRead
+      }
+    } finally {
+      await file.close()
+    }
+    // File-backed libvips metadata can keep a Windows blob locked after completion.
+    const metadata = await sharp(data).metadata()
     if (!metadata.width || !metadata.height) throw new Error(`Asset image dimensions are unavailable: ${asset.id}`)
     return {
       attachmentId: nekroImageAttachmentId(asset.id, effectiveImageDetail(detail)),
