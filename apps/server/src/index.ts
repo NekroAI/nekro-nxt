@@ -1850,6 +1850,7 @@ export const finishChannelTurnTool = (
         ? []
         : [
             '对方明显话还没说完时用 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。',
+            '如果频道没有接受等待，本轮直接结束并返回原因，不会安排再次唤醒。',
           ]),
       'reason 写真实原因，只有后台看得到，不会发到频道里。',
     ].join(''),
@@ -1915,20 +1916,26 @@ export const finishChannelTurnTool = (
         )
       }
       let waiting: { readonly displayName?: string; readonly seconds: number } | undefined
+      let outcome = parsed.outcome
+      let reason = parsed.reason
       if (parsed.outcome === 'waiting-for-more') {
         if (wait === undefined) throw new Error('这里用不了 waiting-for-more，直接回复或者结束这一轮。')
         const started = wait.request({ episodeId: wait.episodeId, seconds: parsed.seconds ?? 20 })
-        if (!started.accepted) throw new Error(started.reason)
-        waiting = {
-          ...(started.displayName === undefined ? {} : { displayName: started.displayName }),
-          seconds: started.seconds,
+        if (!started.accepted) {
+          outcome = 'no-response-needed'
+          reason = started.reason
+        } else {
+          waiting = {
+            ...(started.displayName === undefined ? {} : { displayName: started.displayName }),
+            seconds: started.seconds,
+          }
         }
       }
       exec.concludeTurn()
       return Promise.resolve({
         status: 'finished' as const,
-        outcome: parsed.outcome,
-        reason: parsed.reason,
+        outcome,
+        reason,
         ...(waiting === undefined ? {} : { waiting }),
       })
     },
