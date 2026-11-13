@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import { LlmAdapter, ToolCallId, type GenerateOptions, type StreamChunk } from '@deepseek-ai/dsh-llm'
-import { HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
+import { EXTENSION_SDK_LEVEL, HostApiContracts, type ExtensionCapabilities } from '@nekro-nxt/contracts'
 import { NEKRO_NXT_EXTENSION_AUTHORING_REFERENCE } from '@nekro-nxt/extension-sdk'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createHash } from 'node:crypto'
@@ -855,7 +855,7 @@ return {
         slug: 'turn-trigger-probe',
         description: '读取当前轮的触发消息。',
       })
-      expect(runtime.extensionService.revisionManifest(saved.revision)?.requires?.sdk).toBeLessThanOrEqual(15)
+      expect(runtime.extensionService.revisionManifest(saved.revision)?.requires?.sdk).toBe(EXTENSION_SDK_LEVEL)
       const requirement = runtime.extensions.agentRequirement(entity.agentId, saved.extension.id, saved.revision.id)
       expect(requirement.approvalRequired).toBe(true)
       await expect(
