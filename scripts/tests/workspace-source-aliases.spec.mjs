@@ -25,7 +25,9 @@ test('workspace source aliases point at tracked TypeScript entries', () => {
     }
   }
   assert.deepEqual(missing, [])
-  assert.ok(workspaceSourceAliases['@nekro-nxt/contracts']?.endsWith('packages/contracts/src/index.ts'))
+  const contractsSource = workspaceSourceAliases['@nekro-nxt/contracts']
+  assert.ok(contractsSource)
+  assert.equal(path.relative(root, contractsSource).split(path.sep).join('/'), 'packages/contracts/src/index.ts')
 })
 
 test('every workspace package has a source alias', () => {

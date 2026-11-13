@@ -58,14 +58,18 @@ test('flow reports turn into shots and stale pages, falling back to the previous
     assets: new Map(),
     pages: new Map([
       ['a/fresh', page('a/fresh', 'ok', ['ok-shot'], ['设置', '模型'])],
-      ['a/renamed', page('a/renamed', 'ok', [], ['旧按钮'])],
+      ['a/renamed', page('a/renamed', 'ok', ['renamed-shot'], ['旧按钮'])],
       ['a/broken', page('a/broken', 'broken', ['old-shot', 'never-shot'], [])],
       ['a/plain', page('a/plain', undefined, [], ['随便'])],
     ]),
   }
   await writeFile(
     path.join(dir, 'ok.json'),
-    JSON.stringify({ status: 'passed', shots: { 'ok-shot': { width: 800, height: 600 } }, texts: ['设置', '模型 ID'] }),
+    JSON.stringify({
+      status: 'passed',
+      shots: { 'ok-shot': { width: 800, height: 600 }, 'renamed-shot': { width: 800, height: 600 } },
+      texts: ['设置', '模型 ID'],
+    }),
   )
   await writeFile(
     path.join(dir, 'broken.json'),
@@ -73,12 +77,18 @@ test('flow reports turn into shots and stale pages, falling back to the previous
   )
   await writeFile(path.join(dir, 'ok-shot.light.webp'), 'light')
   await writeFile(path.join(dir, 'ok-shot.dark.webp'), 'dark')
-  const previous = { 'old-shot': { light: 'https://x/l.webp', dark: 'https://x/d.webp', width: 1, height: 1 } }
+  await writeFile(path.join(dir, 'renamed-shot.light.webp'), 'renamed light')
+  await writeFile(path.join(dir, 'renamed-shot.dark.webp'), 'renamed dark')
+  const previous = {
+    'old-shot': { light: 'https://x/l.webp', dark: 'https://x/d.webp', width: 1, height: 1 },
+    'renamed-shot': { light: 'https://x/old-l.webp', dark: 'https://x/old-d.webp', width: 1, height: 1 },
+  }
 
   const { shots, stale, missing } = applyFlows(site, dir, previous)
   assert.equal(shots['ok-shot'].width, 800)
   assert.match(shots['ok-shot'].light, /^https:\/\/dl\.nekro\.ai\/nxt\/docs\/assets\/[0-9a-f]{16}\.webp$/u)
   assert.notEqual(shots['ok-shot'].light, shots['ok-shot'].dark)
+  assert.deepEqual(shots['renamed-shot'], previous['renamed-shot'])
   assert.equal(site.assets.size, 2)
   assert.deepEqual(shots['old-shot'], previous['old-shot'])
   assert.deepEqual([...stale.keys()], ['a/renamed', 'a/broken'])

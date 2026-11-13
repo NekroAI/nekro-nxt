@@ -1,4 +1,5 @@
 import { openMigratedCoreDatabase } from '@nekro-nxt/storage-sqlite'
+import { randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -170,6 +171,84 @@ describe('Server production entry', () => {
     })
     expect(journal).toHaveProperty('errorSummary')
     await expect(stat(path.join(dataRoot, 'backups', 'upgrade.lock'))).rejects.toThrow()
+  })
+
+  it('reclaims a cut-short upgrade lock', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await mkdir(path.join(dataRoot, 'backups'), { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    await writeFile(
+      path.join(dataRoot, 'backups', 'upgrade.lock'),
+      '{"format":"nxt.server-upgrade-lock","version":2,"releaseId":"release-cut-short"',
+    )
+
+    const handle = await startNekroServer({ dataRoot, distIndex, releaseId: 'release-cut-short-lock-test' })
+    try {
+      const live = await fetch(`http://127.0.0.1:${handle.port}/health/live`)
+      expect(live.status).toBe(200)
+    } finally {
+      await handle.stop()
+    }
+    const backups = await readdir(path.join(dataRoot, 'backups'))
+    expect(backups).not.toContain('upgrade.lock')
+    expect(backups.filter((name) => name.startsWith('upgrade.lock.stale-'))).toHaveLength(1)
+  })
+
+  it('refuses to start while a live older host holds the upgrade lock', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await mkdir(path.join(dataRoot, 'backups'), { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    const lockPath = path.join(dataRoot, 'backups', 'upgrade.lock')
+    const owner = {
+      format: 'nxt.server-upgrade-lock',
+      version: 1,
+      releaseId: 'legacy-release',
+      pid: process.ppid,
+      token: randomUUID(),
+    }
+    await writeFile(lockPath, `${JSON.stringify(owner)}\n`)
+
+    await expect(startNekroServer({ dataRoot, distIndex, releaseId: 'release-live-lock-test' })).rejects.toThrow(
+      '另一个 NekroNXT 正在升级这个数据目录',
+    )
+    expect(JSON.parse(await readFile(lockPath, 'utf8'))).toEqual(owner)
+  })
+
+  it('reclaims the upgrade lock a dead version 2 host left behind', async () => {
+    const directory = await createTemporaryRoot()
+    const dataRoot = path.join(directory, 'data')
+    const distIndex = path.join(directory, 'web', 'index.html')
+    await mkdir(path.dirname(distIndex), { recursive: true })
+    await mkdir(path.join(dataRoot, 'backups'), { recursive: true })
+    await writeFile(distIndex, '<div id="root"></div>', 'utf8')
+    const token = randomUUID()
+    await writeFile(
+      path.join(dataRoot, 'backups', 'upgrade.lock'),
+      `${JSON.stringify({
+        format: 'nxt.server-upgrade-lock',
+        version: 2,
+        releaseId: 'release-dead-host',
+        pid: process.ppid,
+        token,
+      })}\n`,
+    )
+
+    const handle = await startNekroServer({ dataRoot, distIndex, releaseId: 'release-stale-v2-lock-test' })
+    try {
+      const live = await fetch(`http://127.0.0.1:${handle.port}/health/live`)
+      expect(live.status).toBe(200)
+    } finally {
+      await handle.stop()
+    }
+    const backups = await readdir(path.join(dataRoot, 'backups'))
+    expect(backups).not.toContain('upgrade.lock')
+    expect(backups).toContain(`upgrade.lock.stale-${token}`)
   })
 
   it('installs, restores, disables and removes a managed DSH plugin through the production entry', async () => {

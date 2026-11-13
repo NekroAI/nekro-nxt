@@ -95,18 +95,27 @@ const createDatabaseAtMigration = async (filename: string, lastMigration: number
         entries: z.array(z.object({ idx: z.number().int(), when: z.number(), tag: z.string() }).passthrough()),
       })
       .parse(JSON.parse(await readFile(path.join(migrationsDirectory, 'meta', '_journal.json'), 'utf8')))
-    for (const entry of journal.entries.filter(({ idx }) => idx <= lastMigration)) {
-      const source = await readFile(path.join(migrationsDirectory, `${entry.tag}.sql`), 'utf8')
-      for (const statement of source
-        .split('--> statement-breakpoint')
-        .map((value) => value.trim())
-        .filter(Boolean)) {
-        native.exec(statement)
+    const migrations = await Promise.all(
+      journal.entries
+        .filter(({ idx }) => idx <= lastMigration)
+        .map(async (entry) => ({
+          entry,
+          source: await readFile(path.join(migrationsDirectory, `${entry.tag}.sql`), 'utf8'),
+        })),
+    )
+    // Build historical schemas with the same batch commit as production migrations.
+    native.transaction(() => {
+      const record = native.prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+      for (const { entry, source } of migrations) {
+        for (const statement of source
+          .split('--> statement-breakpoint')
+          .map((value) => value.trim())
+          .filter(Boolean)) {
+          native.exec(statement)
+        }
+        record.run(createHash('sha256').update(source).digest('hex'), entry.when)
       }
-      native
-        .prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
-        .run(createHash('sha256').update(source).digest('hex'), entry.when)
-    }
+    })()
   } finally {
     native.close()
   }

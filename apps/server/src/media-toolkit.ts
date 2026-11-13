@@ -740,10 +740,24 @@ export class MediaToolkit {
           .map((entry) => entry.trim())
           .filter((entry) => entry !== '' && !GENERIC_FAILURE.test(entry))
           .at(-1) ?? ''
-      const named = [...options.readable, options.cwd].reduce(
-        (text, file) => text.replaceAll(`file:${file}`, path.basename(file)).replaceAll(file, path.basename(file)),
-        line.replaceAll(/file:(\S+)/gu, (_, file: string) => path.basename(file)),
-      )
+      // Replace complete inputs and outputs before directories, including paths with spaces.
+      const files = [
+        ...new Set([...options.readable, ...args.filter((arg) => arg.startsWith('file:')).map((arg) => arg.slice(5))]),
+      ]
+      const namedFiles = files
+        .sort((left, right) => right.length - left.length)
+        .reduce(
+          (text, file) => text.replaceAll(`file:${file}`, path.basename(file)).replaceAll(file, path.basename(file)),
+          line,
+        )
+      // A frame pattern can fail on a numbered file absent from argv; remove its bounded work-directory prefix.
+      const workPrefix = path.join(options.cwd, path.sep)
+      const named = namedFiles
+        .replaceAll(`file:${workPrefix}`, '')
+        .replaceAll(workPrefix, '')
+        .replaceAll(`file:${options.cwd}`, path.basename(options.cwd))
+        .replaceAll(options.cwd, path.basename(options.cwd))
+        .replaceAll(/file:(\S+)/gu, (_, file: string) => path.basename(file))
       throw new MediaError('media-failed', named === '' ? '媒体处理失败。' : `媒体处理失败：${named}`)
     }
     return result

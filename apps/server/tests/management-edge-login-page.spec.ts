@@ -53,11 +53,13 @@ describe('the login page on phones and computers', () => {
   let root: string
   let internal: Server
   let edge: ManagementEdgeHandle
+  let database: Awaited<ReturnType<typeof openMigratedCoreDatabase>>
   const launched: Browser[] = []
 
   beforeAll(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-login-page-'))
-    const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    const repository = new SqliteHostSecurityRepository(database)
     internal = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html' })
       res.end('<!doctype html><title>signed in</title><h1>signed in</h1>')
@@ -86,6 +88,7 @@ describe('the login page on phones and computers', () => {
     await browser?.close()
     await edge?.stop()
     await new Promise((resolve) => internal?.close(resolve))
+    database?.close()
     await rm(root, { recursive: true, force: true })
   })
 
@@ -158,7 +161,9 @@ describe('the login page on phones and computers', () => {
 
   it('shows a phone its own code and why, when the page cannot reach the camera', async () => {
     // Plain HTTP on a network address: browsers keep the camera from the page.
-    const lan = await chromium.launch({ args: ['--host-resolver-rules=MAP nxt-lan.test 127.0.0.1'] })
+    const lan = await chromium.launch({
+      args: ['--host-resolver-rules=MAP nxt-lan.test 127.0.0.1', '--proxy-server=direct://'],
+    })
     launched.push(lan)
     const insecure = await (await lan.newContext(PHONE)).newPage()
     await insecure.goto(`http://nxt-lan.test:${edge.port}/login`)

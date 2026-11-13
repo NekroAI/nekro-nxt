@@ -19,10 +19,12 @@ describe('signing in through the login page', () => {
   let internal: Server
   let edge: ManagementEdgeHandle
   let repository: SqliteHostSecurityRepository
+  let database: Awaited<ReturnType<typeof openMigratedCoreDatabase>>
 
   beforeAll(async () => {
     root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-passkey-'))
-    repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    repository = new SqliteHostSecurityRepository(database)
     internal = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'text/html' })
       res.end('<!doctype html><title>signed in</title><h1>signed in</h1>')
@@ -47,6 +49,7 @@ describe('signing in through the login page', () => {
     await browser?.close()
     await edge?.stop()
     await new Promise((resolve) => internal?.close(resolve))
+    database?.close()
     await rm(root, { recursive: true, force: true })
   })
 

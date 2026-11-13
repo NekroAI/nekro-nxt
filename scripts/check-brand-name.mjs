@@ -21,7 +21,7 @@ const collectMarkdown = async (directory) => {
       continue
     }
     const absolute = path.join(directory, entry.name)
-    const relative = path.relative(repositoryRoot, absolute)
+    const relative = path.relative(repositoryRoot, absolute).split(path.sep).join('/')
     if (relative.startsWith('docs/archive/')) continue
     if (entry.isDirectory()) result.push(...(await collectMarkdown(absolute)))
     else if (entry.name.endsWith('.md')) result.push(absolute)

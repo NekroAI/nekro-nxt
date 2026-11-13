@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 
 const repositoryRoot = process.cwd()
@@ -14,7 +15,7 @@ const pnpmFolders = await readdir(path.join(repositoryRoot, 'node_modules/.pnpm'
 const sharpFolder = pnpmFolders.find((name) => name.startsWith('sharp@'))
 if (!sharpFolder) throw new Error('找不到 Sharp，无法检查品牌资产。请先运行 pnpm install。')
 const { default: sharp } = await import(
-  path.join(repositoryRoot, 'node_modules/.pnpm', sharpFolder, 'node_modules/sharp/dist/index.mjs')
+  pathToFileURL(path.join(repositoryRoot, 'node_modules/.pnpm', sharpFolder, 'node_modules/sharp/dist/index.mjs')).href
 )
 
 const failures = []
