@@ -19,10 +19,11 @@ import {
 } from '@nekro-nxt/contracts'
 import { existsSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import type * as FileOperations from 'node:fs/promises'
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
   AuthoringArtifactStore,
@@ -58,6 +59,22 @@ import {
   type MountedAttachment,
   type Revision,
 } from '../src/index.ts'
+
+const publishFaults = vi.hoisted(() => ({
+  target: undefined as string | undefined,
+  rename: undefined as typeof FileOperations.rename | undefined,
+}))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof FileOperations>()
+  return {
+    ...actual,
+    rename: async (...args: Parameters<typeof actual.rename>) => {
+      if (String(args[1]) === publishFaults.target && publishFaults.rename) return publishFaults.rename(...args)
+      return actual.rename(...args)
+    },
+  }
+})
+const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
 
 const createAuthoringMemoryRepository = (): AuthoringRepository & {
   failDelete: boolean
@@ -670,6 +687,9 @@ describe('Host UI assets', () => {
 const temporaryDirectories: string[] = []
 
 afterEach(async () => {
+  publishFaults.target = undefined
+  publishFaults.rename = undefined
+  Object.defineProperty(process, 'platform', platformDescriptor)
   await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -1452,7 +1472,282 @@ describe('Extension save', () => {
   })
 })
 
+describe('Authoring snapshot publication', () => {
+  const publishFixture = async (platform = 'win32') => {
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform })
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-authoring-publish-'))
+    temporaryDirectories.push(root)
+    const store = new AuthoringArtifactStore(root)
+    const agent = AgentIdSchema.parse('agt_AUTHORINGRETRY')
+    const task = AuthoringTaskIdSchema.parse('aut_AUTHORINGRETRY')
+    const attempt = AuthoringAttemptIdSchema.parse('aua_AUTHORINGRETRY')
+    const snapshot: DynamicAuthoringSnapshot = {
+      name: '发布验证',
+      purpose: '验证完整创造快照发布。',
+      code: { host: 'return { apply() {} }' },
+      resources: { 'assets/probe.module.css': '.probe { color: red; }' },
+      permissions: { permissions: [], networkOrigins: [] },
+      contributions: [],
+    }
+    const relative = path.join(agent, 'authoring', task, 'attempts', attempt)
+    const final = path.join(root, relative)
+    const stagingRoot = path.join(root, agent, 'authoring', '.staging')
+    publishFaults.target = final
+    return {
+      store,
+      snapshot,
+      relative,
+      final,
+      stagingRoot,
+      publish: () => store.publish(agent, task, attempt, snapshot),
+    }
+  }
+
+  it.each(['EPERM', 'EBUSY'])('publishes a complete snapshot after a temporary Windows %s', async (code) => {
+    const fixture = await publishFixture()
+    const actual = await vi.importActual<typeof FileOperations>('node:fs/promises')
+    const failure = Object.assign(new Error('synthetic snapshot sharing violation'), { code })
+    let attempts = 0
+    publishFaults.rename = vi.fn<typeof FileOperations.rename>(async (source, target) => {
+      attempts += 1
+      expect(JSON.parse(await readFile(path.join(String(source), 'snapshot.json'), 'utf8'))).toEqual(fixture.snapshot)
+      expect(await readFile(path.join(String(source), 'source', 'host.js'), 'utf8')).toBe(fixture.snapshot.code.host)
+      expect(await readFile(path.join(String(source), 'assets', 'probe.module.css'), 'utf8')).toBe(
+        fixture.snapshot.resources['assets/probe.module.css'],
+      )
+      expect(await readFile(path.join(String(source), 'content.sha256'), 'utf8')).toMatch(/^[a-f0-9]{64}\n$/u)
+      if (attempts === 1) throw failure
+      return actual.rename(source, target)
+    })
+
+    await expect(fixture.publish()).resolves.toBe(fixture.relative)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(2)
+    await expect(fixture.store.read(fixture.relative)).resolves.toEqual(fixture.snapshot)
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+
+  it('bounds a permanent Windows sharing failure and leaves no published snapshot', async () => {
+    const fixture = await publishFixture()
+    const failure = Object.assign(new Error('synthetic permanent snapshot lock'), { code: 'EPERM' })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.publish()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(5)
+    expect(existsSync(fixture.final)).toBe(false)
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+
+  it.each([
+    { platform: 'linux', code: 'EPERM' },
+    { platform: 'win32', code: 'EACCES' },
+    { platform: 'win32', code: 'EINVAL' },
+  ])('preserves a snapshot $platform $code failure without retrying', async ({ platform, code }) => {
+    const fixture = await publishFixture(platform)
+    const failure = Object.assign(new Error('synthetic snapshot filesystem refusal'), { code })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.publish()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(1)
+    expect(existsSync(fixture.final)).toBe(false)
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+
+  it.each(['EPERM', 'EBUSY'])('keeps an identical snapshot idempotent under Windows %s', async (code) => {
+    const fixture = await publishFixture()
+    await fixture.publish()
+    const failure = Object.assign(new Error('synthetic existing snapshot lock'), { code })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.publish()).resolves.toBe(fixture.relative)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(1)
+    await expect(fixture.store.read(fixture.relative)).resolves.toEqual(fixture.snapshot)
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+
+  it('preserves conflicting snapshot content that appears during Windows backoff', async () => {
+    const fixture = await publishFixture()
+    let attempts = 0
+    const conflictingDigest = 'c'.repeat(64)
+    publishFaults.rename = vi.fn(async () => {
+      attempts += 1
+      if (attempts > 1) {
+        await mkdir(fixture.final, { recursive: true })
+        await writeFile(path.join(fixture.final, 'content.sha256'), `${conflictingDigest}\n`)
+        await writeFile(path.join(fixture.final, 'snapshot.json'), 'synthetic existing snapshot')
+      }
+      throw Object.assign(new Error('synthetic snapshot sharing violation'), { code: 'EPERM' })
+    })
+
+    await expect(fixture.publish()).rejects.toThrow('Authoring Attempt 目录已包含其他内容。')
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(2)
+    expect(await readFile(path.join(fixture.final, 'snapshot.json'), 'utf8')).toBe('synthetic existing snapshot')
+    expect(await readFile(path.join(fixture.final, 'content.sha256'), 'utf8')).toBe(`${conflictingDigest}\n`)
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+
+  it('preserves a file occupying the snapshot destination without retrying', async () => {
+    const fixture = await publishFixture()
+    await mkdir(path.dirname(fixture.final), { recursive: true })
+    await writeFile(fixture.final, 'synthetic snapshot destination file')
+    const failure = Object.assign(new Error('synthetic invalid snapshot destination'), { code: 'EPERM' })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.publish()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(1)
+    expect(await readFile(fixture.final, 'utf8')).toBe('synthetic snapshot destination file')
+    expect(await readdir(fixture.stagingRoot)).toEqual([])
+  })
+})
+
 describe('Extension source store', () => {
+  const publishFixture = async (platform = 'win32') => {
+    Object.defineProperty(process, 'platform', { ...platformDescriptor, value: platform })
+    const directory = await mkdtemp(path.join(tmpdir(), 'nxt-source-publish-'))
+    temporaryDirectories.push(directory)
+    const root = path.join(directory, 'data')
+    const sources = new ExtensionSourceStore(root)
+    const repository = new MemoryExtensionRepository()
+    repository.beforeSave = vi.fn()
+    const snapshot = {
+      name: '发布验证',
+      purpose: '验证完整源码发布。',
+      hostCode: 'return { version: 2 }',
+      contributions: [GREETING_TOOL],
+    }
+    const materialized = materializeDynamicPackage({
+      extensionId: extensionId('publishRetry'),
+      revisionId: revisionId('publishRetry'),
+      snapshot,
+      lineage: { parent: null, ancestry: [] },
+    })
+    const final = sources.revisionSourceDirectory(materialized.manifest.extensionId, materialized.manifest.revisionId)
+    publishFaults.target = final
+    const service = new ExtensionService(repository, sources, { now: () => 1, nextUlid: () => 'publishRetry' })
+    const save = () =>
+      service.saveDynamicPackage({ snapshot, slug: 'publish-retry', displayName: snapshot.name, description: '' })
+    return { sources, repository, materialized, root, final, save }
+  }
+
+  it.each(['EPERM', 'EBUSY'])('retries a temporary Windows %s after complete source writes', async (code) => {
+    const fixture = await publishFixture()
+    const actual = await vi.importActual<typeof FileOperations>('node:fs/promises')
+    const failure = Object.assign(new Error('synthetic sharing violation'), { code })
+    let attempts = 0
+    publishFaults.rename = vi.fn<typeof FileOperations.rename>(async (source, target) => {
+      attempts += 1
+      expect(await readFile(path.join(String(source), 'source', 'host.ts'), 'utf8')).toBe(
+        fixture.materialized.sources.host,
+      )
+      expect(await readFile(path.join(String(source), 'content.sha256'), 'utf8')).toBe(
+        `${fixture.materialized.contentDigest}\n`,
+      )
+      if (attempts === 1) throw failure
+      return actual.rename(source, target)
+    })
+
+    const saved = await fixture.save()
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(2)
+    expect(await readFile(path.join(fixture.final, 'source', 'host.ts'), 'utf8')).toBe(
+      fixture.materialized.sources.host,
+    )
+    expect(await readFile(path.join(fixture.final, 'payload.sha256'), 'utf8')).toBe(
+      `${fixture.materialized.payloadDigest}\n`,
+    )
+    expect(fixture.repository.listExtensionRevisions()).toEqual([saved.revision])
+    expect(fixture.repository.beforeSave).toHaveBeenCalledTimes(1)
+    expect(await readdir(path.join(fixture.root, 'staging'))).toEqual([])
+  })
+
+  it('keeps a permanent Windows sharing failure bounded and commits no Extension or Revision', async () => {
+    const fixture = await publishFixture()
+    const failure = Object.assign(new Error('synthetic permanent sharing violation'), { code: 'EPERM' })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.save()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(5)
+    expect(fixture.repository.beforeSave).not.toHaveBeenCalled()
+    expect(fixture.repository.listExtensions()).toEqual([])
+    expect(fixture.repository.listExtensionRevisions()).toEqual([])
+    expect(existsSync(fixture.final)).toBe(false)
+    expect(await readdir(path.join(fixture.root, 'staging'))).toEqual([])
+  })
+
+  it.each([
+    { platform: 'linux', code: 'EPERM' },
+    { platform: 'win32', code: 'EACCES' },
+    { platform: 'win32', code: 'EINVAL' },
+  ])('preserves $platform $code failures without retrying', async ({ platform, code }) => {
+    const fixture = await publishFixture(platform)
+    const failure = Object.assign(new Error('synthetic filesystem refusal'), { code })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.save()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(1)
+    expect(fixture.repository.beforeSave).not.toHaveBeenCalled()
+    expect(fixture.repository.listExtensionRevisions()).toEqual([])
+    expect(existsSync(fixture.final)).toBe(false)
+    expect(await readdir(path.join(fixture.root, 'staging'))).toEqual([])
+  })
+
+  it('rejects conflicting content published during Windows backoff without changing that Revision', async () => {
+    const fixture = await publishFixture()
+    const conflict = materializeDynamicPackage({
+      extensionId: fixture.materialized.manifest.extensionId,
+      revisionId: fixture.materialized.manifest.revisionId,
+      snapshot: {
+        name: '既有版本',
+        purpose: '保留原文。',
+        hostCode: 'return { version: 1 }',
+        contributions: [GREETING_TOOL],
+      },
+    })
+    let attempts = 0
+    publishFaults.rename = vi.fn(async () => {
+      attempts += 1
+      if (attempts > 1) {
+        await mkdir(path.join(fixture.final, 'source'), { recursive: true })
+        await writeFile(path.join(fixture.final, 'source', 'host.ts'), conflict.sources.host!)
+        await writeFile(path.join(fixture.final, 'content.sha256'), `${conflict.contentDigest}\n`)
+      }
+      throw Object.assign(new Error('synthetic sharing violation'), { code: 'EPERM' })
+    })
+
+    await expect(fixture.save()).rejects.toThrow('Extension Revision directory already has other content.')
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(2)
+    expect(await readFile(path.join(fixture.final, 'source', 'host.ts'), 'utf8')).toBe(conflict.sources.host)
+    expect(await readFile(path.join(fixture.final, 'content.sha256'), 'utf8')).toBe(`${conflict.contentDigest}\n`)
+    expect(fixture.repository.beforeSave).not.toHaveBeenCalled()
+    expect(fixture.repository.listExtensions()).toEqual([])
+    expect(fixture.repository.listExtensionRevisions()).toEqual([])
+    expect(await readdir(path.join(fixture.root, 'staging'))).toEqual([])
+  })
+
+  it('preserves a file occupying the Windows destination without retrying or committing', async () => {
+    const fixture = await publishFixture()
+    await mkdir(path.dirname(fixture.final), { recursive: true })
+    await writeFile(fixture.final, 'synthetic destination file')
+    const failure = Object.assign(new Error('synthetic invalid destination'), { code: 'EPERM' })
+    publishFaults.rename = vi.fn(() => Promise.reject(failure))
+
+    await expect(fixture.save()).rejects.toBe(failure)
+
+    expect(publishFaults.rename).toHaveBeenCalledTimes(1)
+    expect(await readFile(fixture.final, 'utf8')).toBe('synthetic destination file')
+    expect(fixture.repository.beforeSave).not.toHaveBeenCalled()
+    expect(fixture.repository.listExtensionRevisions()).toEqual([])
+    expect(await readdir(path.join(fixture.root, 'staging'))).toEqual([])
+  })
+
   it('treats a duplicate immutable publish as a no-op and rejects conflicting content', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-extension-source-'))
     temporaryDirectories.push(directory)

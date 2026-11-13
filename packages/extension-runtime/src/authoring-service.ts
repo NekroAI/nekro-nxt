@@ -17,8 +17,9 @@ import {
 } from '@nekro-nxt/contracts'
 import { canonicalJson } from '@nekro-nxt/core'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import { monotonicFactory } from 'ulid'
 import { z } from 'zod'
 import {
@@ -131,6 +132,8 @@ const assertStorageIdentity = (value: string): void => {
   }
 }
 
+const WINDOWS_AUTHORING_PUBLISH_RETRY_DELAYS_MS = [50, 100, 200, 400] as const
+
 export class AuthoringArtifactStore {
   readonly #workspaceRoot: string
 
@@ -178,13 +181,34 @@ export class AuthoringArtifactStore {
         ),
       ])
       await mkdir(path.dirname(final), { recursive: true, mode: 0o700 })
-      try {
-        await rename(staging, final)
-      } catch (error) {
-        const code = error instanceof Error && 'code' in error ? Reflect.get(error, 'code') : undefined
-        if (code !== 'EEXIST' && code !== 'ENOTEMPTY') throw error
-        const existing = (await readFile(path.join(final, 'content.sha256'), 'utf8')).trim()
-        if (existing !== contentDigest) throw new Error('Authoring Attempt 目录已包含其他内容。')
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          await rename(staging, final)
+          break
+        } catch (error) {
+          const code = error instanceof Error && 'code' in error ? Reflect.get(error, 'code') : undefined
+          const retryable = process.platform === 'win32' && (code === 'EPERM' || code === 'EBUSY')
+          let existingDirectory = code === 'EEXIST' || code === 'ENOTEMPTY'
+          if (retryable) {
+            const target = await lstat(final).catch((statError: unknown) => {
+              if (statError instanceof Error && 'code' in statError && Reflect.get(statError, 'code') === 'ENOENT') {
+                return undefined
+              }
+              throw error
+            })
+            if (target !== undefined && !target.isDirectory()) throw error
+            existingDirectory ||= target?.isDirectory() === true
+          }
+          if (existingDirectory) {
+            const existing = (await readFile(path.join(final, 'content.sha256'), 'utf8')).trim()
+            if (existing !== contentDigest) throw new Error('Authoring Attempt 目录已包含其他内容。')
+            break
+          }
+          const retryDelay = WINDOWS_AUTHORING_PUBLISH_RETRY_DELAYS_MS[attempt]
+          if (!retryable || retryDelay === undefined) throw error
+          // Snapshot files are complete; retry a temporary sharing lock only while no destination exists.
+          await delay(retryDelay)
+        }
       }
       return relative
     } finally {
