@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
 import { isSilk } from 'silk-wasm'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   ConfinedProgramRunner,
   createProgramSandbox,
@@ -88,6 +88,87 @@ describe('media processing workspace', () => {
     await expect(stat(seen[0]!)).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
+
+it('names a failed input by its file name alone when its path has spaces', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media name-'))
+  const input = path.join(directory, 'clip one.mp4')
+  const output = path.join(directory, 'frames')
+  await writeFile(input, 'fixture input')
+  await mkdir(output)
+  const runner = new ConfinedProgramRunner({
+    sandbox: { confine: () => Promise.reject(new Error('unused')) },
+    confinement: { hidden: [], readable: [] },
+  })
+  const run = vi.spyOn(runner, 'run').mockResolvedValue({
+    exitCode: 1,
+    stdout: Buffer.alloc(0),
+    stderr: `file:${input}: No such file or directory\n`,
+    truncated: false,
+    timedOut: false,
+    confinement: 'full',
+  })
+  const toolkit = new MediaToolkit({ programs: () => ({ ffmpeg: 'fixture', ffprobe: 'fixture' }), runner })
+  try {
+    await expect(
+      toolkit.frames(input, { at: { intervalSeconds: 1, from: 0, to: 1 }, width: 32, format: 'gray8' }, output),
+    ).rejects.toThrow('媒体处理失败：clip one.mp4: No such file or directory')
+  } finally {
+    run.mockRestore()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it.each(['point-uri', 'point-bare', 'pattern-uri', 'pattern-bare'])(
+  'names a failed output without its work directory (%s)',
+  async (scenario) => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media-output name-'))
+    const output = path.join(directory, 'output folder')
+    const input = path.join(output, 'input one.mp4')
+    const frame = path.join(output, 'frame-00001.raw')
+    await mkdir(output)
+    await writeFile(input, 'fixture input')
+    const runner = new ConfinedProgramRunner({
+      sandbox: { confine: () => Promise.reject(new Error('unused')) },
+      confinement: { hidden: [], readable: [] },
+    })
+    const run = vi
+      .spyOn(runner, 'run')
+      .mockResolvedValueOnce({
+        exitCode: 0,
+        stdout: Buffer.from(
+          JSON.stringify({ format: { duration: '1' }, streams: [{ codec_type: 'video', width: 16, height: 16 }] }),
+        ),
+        stderr: '',
+        truncated: false,
+        timedOut: false,
+        confinement: 'full',
+      })
+      .mockResolvedValue({
+        exitCode: 1,
+        stdout: Buffer.alloc(0),
+        stderr: `${scenario.endsWith('uri') ? 'file:' : ''}${frame}: Permission denied\n`,
+        truncated: false,
+        timedOut: false,
+        confinement: 'full',
+      })
+    const toolkit = new MediaToolkit({ programs: () => ({ ffmpeg: 'fixture', ffprobe: 'fixture' }), runner })
+    try {
+      await expect(
+        toolkit.frames(
+          input,
+          {
+            at: scenario.startsWith('point') ? [0] : { intervalSeconds: 1, from: 0, to: 1 },
+            format: 'gray8',
+          },
+          output,
+        ),
+      ).rejects.toThrow('媒体处理失败：frame-00001.raw: Permission denied')
+    } finally {
+      run.mockRestore()
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+)
 
 describe.skipIf(programs === undefined)('media processing with this device’s ffmpeg', () => {
   let root: string
