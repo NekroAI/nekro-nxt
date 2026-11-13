@@ -1,6 +1,6 @@
 import { publishedPreviewCommit } from './lib/preview-changes.mjs'
 import { spawnSync } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -370,7 +370,7 @@ export async function publishPreviewTransaction({ isCurrent, upload, publish, ro
 async function finalizeRollingRelease() {
   if (commandOption('--build-result') !== 'success') {
     console.log('平台候选未全部成功，保留当前 Preview。')
-    return
+    return false
   }
   const repository = requireRepository()
   const { release, distribution } = await readContext()
@@ -381,7 +381,7 @@ async function finalizeRollingRelease() {
     !cancellationRequested && ghJson(['api', `/repos/${repository}/git/ref/heads/main`]).object?.sha === release.commit
   if (!isCurrent()) {
     console.log('过期候选不更新 Preview。')
-    return
+    return false
   }
   const previousRelease = readRollingRelease(repository)
   const previousCommit =
@@ -390,7 +390,8 @@ async function finalizeRollingRelease() {
       : undefined
   if (previousCommit === release.commit) {
     console.log('当前提交已有完整成功 Preview，保留原产物。')
-    return
+    // The same published commit can retry documentation publication.
+    return true
   }
   const targets = previewArtifactTargets(distribution, release.version)
   const receipts = new Map()
@@ -501,7 +502,7 @@ async function finalizeRollingRelease() {
   })
   if (!published) {
     console.log('构建期间 main 已更新，候选已清理。')
-    return
+    return false
   }
   // Publication is complete. A stale-asset deletion failure must not roll back
   // to a release whose assets have already begun to be pruned.
@@ -515,11 +516,17 @@ async function finalizeRollingRelease() {
     console.warn('Preview 已发布，旧附件清理稍后重试：', error)
   }
   console.log(`滚动 Preview 已发布：${release.version} (${release.commit.slice(0, 12)})`)
+  return true
 }
 
-async function main() {
+export async function main() {
   const command = process.argv[2]
-  if (command === 'finalize') return finalizeRollingRelease()
+  if (command === 'finalize') {
+    const published = await finalizeRollingRelease()
+    const outputFile = process.env['GITHUB_OUTPUT']
+    if (outputFile) await appendFile(outputFile, `published=${published}\n`, 'utf8')
+    return published
+  }
   if (command === 'record-server') return recordServerCandidate()
   throw new Error(`滚动预览版命令无效：${command ?? 'undefined'}`)
 }
