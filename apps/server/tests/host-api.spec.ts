@@ -2205,7 +2205,10 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       await first.dispose()
     }
 
-    expect((await stat(credentialPath)).mode & 0o777).toBe(0o600)
+    const credentialInfo = await stat(credentialPath)
+    expect(credentialInfo.isFile()).toBe(true)
+    if (process.platform === 'win32') expect(credentialInfo.mode & 0o200).toBe(0o200)
+    else expect(credentialInfo.mode & 0o777).toBe(0o600)
     const second = await createRuntime()
     try {
       const restored = await second.host.getLlmProviderSettings()

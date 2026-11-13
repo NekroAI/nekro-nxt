@@ -425,7 +425,7 @@ describe('managed DSH plugin lifecycle', () => {
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ token: inspection.token, approvedBuilds: [] }),
           })
-          expect(commit.ok).toBe(true)
+          expect(commit.ok, `HTTP ${commit.status}: ${await commit.text()}`).toBe(true)
           expect(importedRuntime.repository.listDshPluginPackages()).toEqual([
             expect.objectContaining({
               packageName: '@example/dsh-managed-fixture',
