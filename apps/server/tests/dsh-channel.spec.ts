@@ -296,6 +296,29 @@ class FinishChannelTurnModel extends ScriptedCommunicationModel {
   }
 }
 
+class RefusedWaitModel extends ScriptedCommunicationModel {
+  constructor(private readonly beforeWait: () => void) {
+    super()
+  }
+
+  override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    await Promise.resolve()
+    this.calls.push(options)
+    if (this.calls.length !== 1) {
+      yield { type: 'finish', reason: { kind: 'stop' } }
+      return
+    }
+    this.beforeWait()
+    const id = ToolCallId('refused-wait')
+    const name = 'finish_channel_turn'
+    const argumentsText = JSON.stringify({ outcome: 'waiting-for-more', reason: '等对方把话说完。', seconds: 10 })
+    yield { type: 'block-start', index: 0, blockType: 'tool-call' }
+    yield { type: 'tool-call-delta', index: 0, id, name, argumentsDelta: argumentsText }
+    yield { type: 'block-end', index: 0, block: { type: 'tool-call', id, name, arguments: argumentsText } }
+    yield { type: 'finish', reason: { kind: 'tool-calls' } }
+  }
+}
+
 /** Claims the turn as answered before sending anything, then sends once the claim is refused. */
 class ClaimedReplyModel extends ScriptedCommunicationModel {
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -715,6 +738,114 @@ class InvalidImageInspectionProbeModel extends ScriptedCommunicationModel {
 }
 
 describe('DSH Host and internal Channel vertical slice', () => {
+  it('ends a real DSH turn normally when the channel refuses a wait without scheduling a wake (#157)', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-refused-wait-'))
+    temporaryDirectories.push(directory)
+    const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+    const repository = new SqliteCoreRepository(database)
+    const assetService = new AssetService(repository, path.join(directory, 'assets'))
+    let sequence = 0
+    const core = new CoreService(repository, { now: () => 1_000, nextUlid: () => `W${++sequence}` })
+    const agent = core.createAgent({
+      displayName: '等待拒绝测试智能体',
+      persona: '',
+      model: { provider: 'test-provider', model: 'chat-model' },
+    })
+    const connection = core.createConnection({ adapterKey: 'fixture-alpha', config: {} })
+    const channel = core.createChannel({
+      connectionId: connection.id,
+      platformChannelId: 'refused-wait',
+      kind: 'internal',
+    })
+    const member = core.observeChannelMember({
+      connectionId: connection.id,
+      channelId: channel.id,
+      platformUserId: 'fixture-speaker',
+      displayName: '阿离',
+      observedAt: 1_000,
+    }).member
+    const binding = { channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' as const }
+    core.createBinding({ ...binding, responseTiming: { waitEnabled: true } })
+    // The session offers waiting first; the persisted channel setting changes while the model is deciding.
+    const model = new RefusedWaitModel(() =>
+      core.replaceBinding({ ...binding, responseTiming: { waitEnabled: false } }),
+    )
+    const runtimeRef: { current?: ChannelRuntime } = {}
+    const web = createFakeLocalChannelConnection(connection.id, (event) =>
+      runtimeRef.current!.acceptChannelInbound(event),
+    )
+    const host = await DshHostRuntime.create({
+      sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+      communication: {
+        sendMessage: (input) => runtimeRef.current!.sendMessage(input),
+        supportsWaitForMore: (channelId) => runtimeRef.current!.waitForMoreAvailable(channelId),
+        waitForMore: (input) => runtimeRef.current!.requestWaitForMore(input),
+      },
+      history: repository,
+      assets: repository,
+      assetService,
+      resolveAgentRevision: (revisionId) => repository.getAgentRevision(revisionId),
+      configureLlm: (context) => {
+        context.llm.registerAdapter(['test-provider'], model)
+      },
+    })
+    const timers = { set: vi.fn(() => 1), clear: vi.fn() }
+    const runtime = new ChannelRuntime(core, repository, repository, host, {
+      now: () => 1_001,
+      nextUlid: () => `WAIT${++sequence}`,
+      resolveAdapter: () => web,
+      timers,
+    })
+    runtimeRef.current = runtime
+    try {
+      await web.start()
+      await runtime.acceptChannelInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'fixture-alpha',
+        kind: 'message-created',
+        senderMemberId: member.id,
+        parts: [{ type: 'text', text: '我想问一下' }],
+        platformTimestamp: 1_000,
+        receivedAt: 1_000,
+        dedupeKey: 'refused-wait-message',
+      })
+      const episode = repository.getActiveEpisode(channel.id, agent.definition.id)!
+      await host.whenIdle(episode.dshSessionId!)
+      const events = host.sessionEvents(episode.dshSessionId!)
+      expect(events.filter((event) => event.type === 'turn/end')).toEqual([
+        expect.objectContaining({ data: { turn: 1, reason: { kind: 'completed' } } }),
+      ])
+      const result = events.find((event) => event.type === 'tool/result')
+      if (result?.type !== 'tool/result') throw new Error('Expected the finish_channel_turn result.')
+      expect(result.data.message.isError).not.toBe(true)
+      expect(JSON.stringify(result)).toContain('这个频道关闭了等待。')
+      expect(
+        events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toEqual([])
+      const projection = projectChannelRuntime({
+        channelId: channel.id,
+        agentId: agent.definition.id,
+        episodeId: episode.id,
+        sessionStatus: host.sessionStatus(episode.dshSessionId!),
+        pendingInjectCount: 0,
+        events: host.normalizedSessionEvents(episode.dshSessionId!),
+      })
+      expect(projection.turns).toHaveLength(1)
+      expect(projection.turns[0]).toMatchObject({ state: 'completed', responseState: 'finished', producedReply: false })
+      expect(model.calls).toHaveLength(1)
+      expect(runtime.responseWait(channel.id)).toBeUndefined()
+      expect(timers.set).not.toHaveBeenCalled()
+    } finally {
+      await runtime.dispose()
+      await host.dispose()
+      await web.stop()
+      database.close()
+    }
+  })
+
   it('supports multi-stage sends, enforces two reply corrections, and projects protocol failure after a third miss', async () => {
     const runScenario = async (
       model: ScriptedCommunicationModel,
