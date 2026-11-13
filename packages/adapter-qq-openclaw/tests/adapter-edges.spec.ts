@@ -318,6 +318,55 @@ describe('QQ OpenClaw connection boundaries', () => {
     await adapter.stop()
   })
 
+  it.each([
+    { reason: 'size limit', error: new Error('Remote asset exceeds the size limit.') },
+    {
+      reason: 'importer abort without dispatch cancellation',
+      error: new DOMException('Attachment transfer aborted.', 'AbortError'),
+    },
+  ])('keeps the text and the other attachments when one attachment cannot be read: $reason', async ({ error }) => {
+    const accepted: AdapterChannelInboundEvent[] = []
+    const inbound: QQInboundBridge = {
+      ensureTarget: () => Promise.resolve(channelId),
+      ensureMember: () => Promise.resolve(memberId),
+      isSelfMember: () => Promise.resolve(false),
+      importAttachment: ({ url }) =>
+        url === 'https://cdn.test/too-large'
+          ? Promise.reject(error)
+          : Promise.resolve({ assetId: AssetIdSchema.parse('ast_image'), mediaType: 'image/png' }),
+      resolveQuote: () => Promise.resolve(undefined),
+    }
+    const adapter = makeAdapter({
+      context: makeContext({
+        acceptChannelInbound: (event) => {
+          accepted.push(event)
+          return Promise.resolve({ channelEventId: ChannelEventIdSchema.parse('evt_unread1'), inserted: true })
+        },
+      }),
+      inbound,
+    })
+    await adapter.start()
+    await adapter.receive({
+      eventType: 'GROUP_MESSAGE_CREATE',
+      platformMessageId: 'unreadable-attachment',
+      target: { kind: 'group', openId: 'group' },
+      senderOpenId: 'sender',
+      content: '看看这个',
+      attachments: [
+        { url: 'https://cdn.test/too-large', fileName: 'clip.mp4', mediaType: 'video/mp4' },
+        { url: 'https://cdn.test/image', mediaType: 'image/png' },
+      ],
+      platformTimestamp: 400,
+    })
+    expect(accepted[0]?.parts).toEqual([
+      { type: 'text', text: '看看这个' },
+      { type: 'text', text: '附件未能读取。' },
+      { type: 'image', assetId: 'ast_image' },
+    ])
+    expect(accepted[0]?.assetOccurrences).toEqual([{ partIndex: 2, assetId: 'ast_image' }])
+    await adapter.stop()
+  })
+
   it('marks only the receiving bot as itself and ignores mentions of other bots', async () => {
     const accepted: AdapterChannelInboundEvent[] = []
     const ensured: { readonly openId: string; readonly self?: boolean }[] = []

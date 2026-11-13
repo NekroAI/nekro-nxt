@@ -17,3 +17,5 @@
 Adapter 通过通用 `identities`、`members`、`messages`、`assets`、`credentials`、`state`、`diagnostics` 和 `transport` Host Service 接入身份、Quote、两阶段 Asset、Gateway checkpoint、网络与诊断；Server 不保留 QQ Bridge。无密钥测试覆盖真实生产贡献但替换外部网络边界；通知高亮、平台额度和真实 CDN/上传仍必须使用专用 QQ 账号验收。
 
 QQ 引用只在当前 Connection 和 Channel 内把平台引用映射为 `logicalMessageId`。`message_type` 表示回复但缺少引用字段、或平台引用无法命中已持久消息时，Adapter 发布不包含原始 payload、平台消息 ID 或成员标识的原因诊断；入站正文继续提交，但不伪造 quote。
+
+普通消息的附件逐项导入。单个附件导入失败时，在原位置记录“附件未能读取。”，正文和其他附件继续提交；导入因接收取消而失败时，取消继续向上传递，不提交消息或推进 Gateway checkpoint。
