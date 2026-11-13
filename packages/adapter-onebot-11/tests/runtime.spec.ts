@@ -1071,6 +1071,35 @@ describe('OneBot 11 normalized inbound', () => {
       { parts: [{ type: 'text', text: '看完说一声' }] },
     ])
 
+    // A voice message goes alone, so the text beside it is not dropped by the platform.
+    const voice = { type: 'audio' as const, assetId: AssetIdSchema.parse('ast_VOICE') }
+    const quote = { type: 'quote' as const, messageId: LogicalMessageIdSchema.parse('msg_QUOTED') }
+    expect(await runtime.planOutbound({ parts: [{ type: 'text', text: '念给你听' }, voice] })).toEqual([
+      { parts: [{ type: 'text', text: '念给你听' }] },
+      { parts: [voice] },
+    ])
+    expect(await runtime.planOutbound({ parts: [quote, voice] })).toEqual([{ parts: [voice] }])
+    expect(await runtime.planOutbound({ parts: [quote] })).toEqual([{ parts: [quote] }])
+    Object.defineProperty(fake.context.messages, 'resolvePlatformMessageId', {
+      value: () => Promise.resolve('file-anchor'),
+    })
+    await expect(
+      runtime.deliver(
+        {
+          deliveryId: PhysicalDeliveryIdSchema.parse('phy_VOICE'),
+          logicalMessageId: LogicalMessageIdSchema.parse('msg_VOICE'),
+          connectionId: fake.context.connectionId,
+          channelId,
+          replyTo: LogicalMessageIdSchema.parse('msg_QUOTED'),
+          parts: [voice],
+        },
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({ status: 'sent' })
+    expect(protocol.requests.findLast(({ action }) => action === 'send_group_msg')?.['params']).toMatchObject({
+      message: [{ type: 'record', data: { file: 'base64://AQID' } }],
+    })
+
     const delivery = {
       deliveryId: PhysicalDeliveryIdSchema.parse('phy_FILE'),
       logicalMessageId: LogicalMessageIdSchema.parse('msg_FILE'),
@@ -1099,6 +1128,90 @@ describe('OneBot 11 normalized inbound', () => {
     expect(JSON.stringify(tooLarge)).toContain('64 MB')
     await runtime.stop()
   })
+
+  it.each(['audio', 'file'] as const)(
+    'keeps quoted %s attached to its accompanying text without mixing or duplicating the reply',
+    async (mediaType) => {
+      const protocol = await protocolEndpoint()
+      const fake = createFakeContext()
+      Object.defineProperty(fake.context.messages, 'resolvePlatformMessageId', {
+        value: () => Promise.resolve('quoted-media-anchor'),
+      })
+      const runtime = new OneBot11Runtime({
+        context: fake.context,
+        config: { endpoint: protocol.endpoint, capturePokeEvents: true, captureMessageReactionEvents: false },
+      })
+      await runtime.start()
+      await waitFor(() => fake.diagnostics.some(({ status }) => status === 'connected'))
+      const channelId = await fake.context.channels.ensure({
+        platformChannelId: 'group:quoted-media-group',
+        kind: 'group',
+        observedAt: Date.now(),
+      })
+      const quote = { type: 'quote' as const, messageId: LogicalMessageIdSchema.parse('msg_QUOTEDMEDIA') }
+      const media =
+        mediaType === 'audio'
+          ? { type: 'audio' as const, assetId: AssetIdSchema.parse('ast_QUOTEDVOICE') }
+          : { type: 'file' as const, assetId: AssetIdSchema.parse('ast_QUOTEDFILE'), name: '示例.txt' }
+      const text = { type: 'text' as const, text: '这段媒体的说明' }
+      let sequence = 0
+      try {
+        for (const quoteFirst of [true, false]) {
+          for (const replyTo of [undefined, quote.messageId]) {
+            const parts = quoteFirst ? [quote, media, text] : [text, media, quote]
+            const plans = await runtime.planOutbound({ parts })
+            expect(plans.flatMap(({ parts }) => parts).filter(({ type }) => type !== 'quote')).toEqual(
+              parts.filter(({ type }) => type !== 'quote'),
+            )
+            const previousRequests = protocol.requests.length
+            for (const plan of plans) {
+              await expect(
+                runtime.deliver(
+                  {
+                    deliveryId: PhysicalDeliveryIdSchema.parse(`phy_QUOTEDMEDIA${++sequence}`),
+                    logicalMessageId: LogicalMessageIdSchema.parse('msg_MEDIAEXPLANATION'),
+                    connectionId: fake.context.connectionId,
+                    channelId,
+                    parts: plan.parts,
+                    ...(replyTo === undefined ? {} : { replyTo }),
+                  },
+                  new AbortController().signal,
+                ),
+              ).resolves.toMatchObject({ status: 'sent' })
+            }
+            const textRequest = {
+              action: 'send_group_msg',
+              params: {
+                group_id: 'quoted-media-group',
+                message: [
+                  { type: 'reply', data: { id: 'quoted-media-anchor' } },
+                  { type: 'text', data: { text: text.text } },
+                ],
+              },
+            }
+            const mediaRequest =
+              mediaType === 'audio'
+                ? {
+                    action: 'send_group_msg',
+                    params: {
+                      group_id: 'quoted-media-group',
+                      message: [{ type: 'record', data: { file: 'base64://AQID' } }],
+                    },
+                  }
+                : {
+                    action: 'upload_group_file',
+                    params: { group_id: 'quoted-media-group', file: 'base64://AQID', name: '示例.txt' },
+                  }
+            expect(protocol.requests.slice(previousRequests).map(({ action, params }) => ({ action, params }))).toEqual(
+              quoteFirst ? [mediaRequest, textRequest] : [textRequest, mediaRequest],
+            )
+          }
+        }
+      } finally {
+        await runtime.stop()
+      }
+    },
+  )
 
   it('maps the typed platform actions onto OneBot calls, with message ids translated and endpoint variants tried', async () => {
     const protocol = await protocolEndpoint((request) =>
