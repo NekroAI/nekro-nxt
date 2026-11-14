@@ -1,6 +1,9 @@
 import { expect, type APIRequestContext, type APIResponse } from '@playwright/test'
 import { HostApiContracts } from '@nekro-nxt/contracts'
 
+/** How a write reports that the shared namespace moved on: saving uses DSH's wording, removal its own. */
+const SETTINGS_CONFLICTS = ['changed since it was read', '供应商配置已变化']
+
 /**
  * Journeys run in parallel against one Host, and every model provider lives in one settings namespace. A write
  * carries the revision it read, so another journey's write in between rejects it; read again and retry.
@@ -8,7 +11,9 @@ import { HostApiContracts } from '@nekro-nxt/contracts'
 export async function retryOnSettingsConflict(attempt: () => Promise<APIResponse>): Promise<APIResponse> {
   for (let tries = 0; tries < 5; tries += 1) {
     const response = await attempt()
-    if (response.ok() || !(await response.text()).includes('changed since it was read')) return response
+    if (response.ok()) return response
+    const text = await response.text()
+    if (!SETTINGS_CONFLICTS.some((conflict) => text.includes(conflict))) return response
   }
   throw new Error('模型供应商设置连续五次在写入前被其他旅程改动。')
 }
