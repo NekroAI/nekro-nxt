@@ -1,7 +1,19 @@
 import { createHash } from 'node:crypto'
 import { writeFileSync } from 'node:fs'
 import type * as FileOperations from 'node:fs/promises'
-import { mkdtemp, mkdir, readFile, readdir, rm, symlink, readlink, stat, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  readlink,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -825,5 +837,157 @@ describe('live logs retained independently of restored business data', () => {
       '受保护或未知路径',
     )
     expect(await readFile(path.join(options.dataRoot, 'logs/runtime.sqlite'), 'utf8')).toBe('synthetic log database')
+  })
+})
+
+describe('reusing a recovery point when the same version restarts', () => {
+  const pointOf = (dataRoot: string, backupId: string) => path.join(dataRoot, 'backups', backupId)
+  const storedNote = (directory: string) => path.join(directory, 'roots/data/workspaces/synthetic-agent/note.txt')
+  const readRecord = async (directory: string) =>
+    z
+      .object({ manifestSha256: z.string(), entries: z.array(z.number()) })
+      .passthrough()
+      .parse(JSON.parse(await readFile(path.join(directory, 'verified.json'), 'utf8')))
+  // Node can only set whole-millisecond times, so pin the stored note to one before replaying metadata.
+  const pinned = new Date('2030-01-02T03:04:05Z')
+  const pinnedPoint = async (options: Awaited<ReturnType<typeof fixture>>) => {
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    await utimes(storedNote(directory), pinned, pinned)
+    // The changed time sends this start through the full verification, which records the pinned time.
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    const index = first.entries.findIndex((entry) => entry.path === 'workspaces/synthetic-agent/note.txt')
+    expect((await readRecord(directory)).entries[index]).toBe(pinned.getTime())
+    return { first, directory }
+  }
+  /** Writes new content and puts the pinned modification time back. */
+  const writeKeepingTime = async (filename: string, content: string): Promise<void> => {
+    await writeFile(filename, content)
+    await utimes(filename, pinned, pinned)
+  }
+
+  it('records the first full verification and later checks metadata only', async () => {
+    const options = await fixture()
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    const record = await readRecord(directory)
+    expect(record.manifestSha256).toBe(
+      createHash('sha256')
+        .update(await readFile(path.join(directory, 'manifest.json')))
+        .digest('hex'),
+    )
+    expect(record.entries).toHaveLength(first.entries.length)
+    await pinnedPoint(options)
+    // Same size, same time, different bytes: only a content hash can tell, and a restart does not hash.
+    await writeKeepingTime(storedNote(directory), 'BEFORE UPGRADE')
+    expect(await createUpgradeBackup(options)).toEqual(first)
+  })
+
+  it('verifies every file again before restoring, even after the quick check passed', async () => {
+    const options = await fixture()
+    const { first, directory } = await pinnedPoint(options)
+    await writeKeepingTime(storedNote(directory), 'BEFORE UPGRADE')
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    await writeFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'failed new generation')
+    await expect(restoreUpgradeBackup({ dataRoot: options.dataRoot, backupId: first.backupId })).rejects.toThrow(
+      '恢复点内容校验失败',
+    )
+    // Nothing was moved aside, and the point is no longer taken on trust at the next start.
+    expect(await readFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/note.txt'), 'utf8')).toBe(
+      'failed new generation',
+    )
+    expect(await readdir(path.join(options.dataRoot, 'backups'))).not.toContain(`before-restore-${first.backupId}`)
+    await expect(readFile(path.join(directory, 'verified.json'))).rejects.toThrow()
+    await expect(createUpgradeBackup(options)).rejects.toThrow('恢复点内容校验失败')
+  })
+
+  it('falls back to the full verification when a modification time differs', async () => {
+    const options = await fixture()
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    const index = first.entries.findIndex((entry) => entry.path === 'workspaces/synthetic-agent/note.txt')
+    // Touched but intact: the full verification passes and records the new time.
+    const touched = new Date('2030-01-02T03:04:05Z')
+    await utimes(storedNote(directory), touched, touched)
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    expect((await readRecord(directory)).entries[index]).toBe((await lstat(storedNote(directory))).mtimeMs)
+    // Damaged with a new time: the full verification runs and rejects the point.
+    await writeFile(storedNote(directory), 'BEFORE UPGRADE')
+    await expect(createUpgradeBackup(options)).rejects.toThrow('恢复点内容校验失败')
+  })
+
+  it('falls back to the full verification when a size differs or a file is added', async () => {
+    const options = await fixture()
+    const { first, directory } = await pinnedPoint(options)
+    await writeKeepingTime(storedNote(directory), 'before upgrade, longer')
+    await expect(createUpgradeBackup(options)).rejects.toThrow('恢复点内容校验失败')
+    await writeKeepingTime(storedNote(directory), 'before upgrade')
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    await writeFile(path.join(path.dirname(storedNote(directory)), 'extra.txt'), 'not in manifest')
+    await expect(createUpgradeBackup(options)).rejects.toThrow('清单校验失败')
+  })
+
+  it('does not trust a record that no longer matches the manifest', async () => {
+    const options = await fixture()
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    const recordPath = path.join(directory, 'verified.json')
+    const good = await readRecord(directory)
+    await writeUpgradeJson(recordPath, { ...good, manifestSha256: '0'.repeat(64) })
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    expect((await readRecord(directory)).manifestSha256).toBe(good.manifestSha256)
+    await writeFile(recordPath, 'not json')
+    expect(await createUpgradeBackup(options)).toEqual(first)
+    // A manifest edited without its checksum is rejected outright.
+    const manifestPath = path.join(directory, 'manifest.json')
+    await writeFile(manifestPath, JSON.stringify({ ...first, createdAt: first.createdAt + 1 }))
+    await expect(createUpgradeBackup(options)).rejects.toThrow('清单校验失败')
+    // A manifest replaced together with its checksum gets the full verification, which sees the wrong release.
+    await writeUpgradeJson(manifestPath, { ...first, releaseId: 'synthetic-other-release' })
+    await writeUpgradeJson(path.join(directory, 'manifest.sha256'), {
+      sha256: createHash('sha256')
+        .update(await readFile(manifestPath))
+        .digest('hex'),
+    })
+    await expect(createUpgradeBackup(options)).rejects.toThrow('身份与本次升级不匹配')
+  })
+
+  it('rejects a stored directory replaced by a symlink in both checks', async () => {
+    const options = await fixture()
+    for (const name of ['one', 'two', 'three'])
+      await writeFile(path.join(options.dataRoot, 'workspaces/synthetic-agent', `${name}.txt`), `synthetic ${name}`)
+    await mkdir(path.join(options.dataRoot, 'workspaces/synthetic-agent/deep/deeper'), { recursive: true })
+    await writeFile(path.join(options.dataRoot, 'workspaces/synthetic-agent/deep/deeper/leaf.txt'), 'synthetic leaf')
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    const stored = path.join(directory, 'roots/data/workspaces/synthetic-agent/deep')
+    // An identical copy elsewhere: content hashes would match if the link were followed.
+    const outside = await mkdtemp(path.join(tmpdir(), 'nxt-upgrade-outside-'))
+    directories.push(outside)
+    await mkdir(path.join(outside, 'deeper'))
+    await writeFile(path.join(outside, 'deeper/leaf.txt'), 'synthetic leaf')
+    await rm(stored, { recursive: true })
+    await symlink(outside, stored)
+    await expect(createUpgradeBackup(options)).rejects.toThrow('校验失败')
+    await expect(verifyUpgradeBackup(directory)).rejects.toThrow('校验失败')
+  })
+
+  it('rejects damage among many files hashed at once, the same way on every run', async () => {
+    const options = await fixture()
+    for (let index = 0; index < 24; index += 1)
+      await writeFile(
+        path.join(options.dataRoot, 'workspaces/synthetic-agent', `file-${String(index).padStart(2, '0')}.txt`),
+        `synthetic ${index}`,
+      )
+    const first = await createUpgradeBackup(options)
+    const directory = pointOf(options.dataRoot, first.backupId)
+    const agent = path.join(directory, 'roots/data/workspaces/synthetic-agent')
+    await writeFile(path.join(agent, 'file-03.txt'), 'SYNTHETIC 3')
+    await writeFile(path.join(agent, 'file-17.txt'), 'SYNTHETIC 17')
+    for (let attempt = 0; attempt < 3; attempt += 1)
+      await expect(verifyUpgradeBackup(directory)).rejects.toThrow('恢复点内容校验失败')
+    await writeFile(path.join(agent, 'file-03.txt'), 'synthetic 3')
+    await writeFile(path.join(agent, 'file-17.txt'), 'synthetic 17')
+    expect(await verifyUpgradeBackup(directory)).toEqual(first)
   })
 })

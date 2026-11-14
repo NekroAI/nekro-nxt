@@ -178,13 +178,17 @@ export const writeUpgradeJson = async (filename: string, value: unknown): Promis
 
 const statIdentity = (info: Stats): string =>
   JSON.stringify([info.dev, info.ino, info.mode, info.size, info.mtimeMs, info.ctimeMs])
+// Large sequential reads; the 64 KiB stream default spends most of a multi-GB verification on per-chunk overhead.
+const DIGEST_READ_BYTES = 1024 * 1024
+// Files hashed at once during a full verification. Small enough not to thrash a spinning external disk.
+const DIGEST_CONCURRENCY = 4
 const fileDigest = async (filename: string): Promise<string> => {
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
     const before = await handle.stat()
     if (!before.isFile()) throw new Error('恢复点文件校验失败。')
     const hash = createHash('sha256')
-    for await (const chunk of handle.createReadStream({ autoClose: false })) {
+    for await (const chunk of handle.createReadStream({ autoClose: false, highWaterMark: DIGEST_READ_BYTES })) {
       if (!Buffer.isBuffer(chunk)) throw new Error('校验数据流格式无效。')
       hash.update(chunk)
     }
@@ -281,16 +285,50 @@ const sameInventory = (a: Inventory, b: Inventory): boolean =>
   JSON.stringify([...a.identities].sort()) === JSON.stringify([...b.identities].sort()) &&
   JSON.stringify(a.entries) === JSON.stringify(b.entries)
 
-/** Every owned parent must still be a directory before using a relative manifest path. */
-const safeEntryPath = async (base: string, relative: string): Promise<string> => {
+/**
+ * Every owned parent must still be a directory before using a relative manifest path. `checked` holds directories
+ * this pass already proved to be real, non-symlink directories at their own path; a verification pass over a whole
+ * tree shares one set so each directory is resolved once instead of once per descendant. Only pass a set within a
+ * single offline pass whose tree nothing else writes.
+ */
+const safeEntryPath = async (base: string, relative: string, checked?: Set<string>): Promise<string> => {
   relativePath.parse(relative)
-  if ((await realDirectory(base)) !== base) throw new Error('恢复点根目录身份发生变化。')
+  if (!checked?.has(base)) {
+    if ((await realDirectory(base)) !== base) throw new Error('恢复点根目录身份发生变化。')
+    checked?.add(base)
+  }
   let current = base
   for (const name of relative.split('/').slice(0, -1)) {
     current = path.join(current, name)
+    if (checked?.has(current)) continue
     if ((await realDirectory(current)) !== current) throw new Error('恢复点目录结构无效。')
+    checked?.add(current)
   }
   return path.join(base, relative)
+}
+
+/**
+ * Runs `task(0..count-1)` with at most `limit` in flight. Indices start in order and none past a known failure
+ * starts, so the error thrown is always the one for the lowest failing index — the same one a sequential loop
+ * would report.
+ */
+const runBounded = async (count: number, limit: number, task: (index: number) => Promise<void>): Promise<void> => {
+  let next = 0
+  let failure: { index: number; error: unknown } | undefined
+  const worker = async (): Promise<void> => {
+    while (next < count) {
+      const index = next
+      next += 1
+      if (failure !== undefined && index > failure.index) return
+      try {
+        await task(index)
+      } catch (error) {
+        if (failure === undefined || index < failure.index) failure = { index, error }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, count) }, worker))
+  if (failure !== undefined) throw failure.error
 }
 const copyFileVerified = async (
   source: string,
@@ -375,6 +413,9 @@ const verifyEntries = async (
   if (actual.size !== entries.length) throw new Error('恢复点文件清单校验失败：存在缺失或额外文件。')
   const directories = new Set<string>()
   const seen = new Set<string>()
+  // The inventory above already walked this tree and rejected symlinked directories; resolve each parent once.
+  const checkedDirectories = new Set<string>()
+  const files: { entry: BackupEntry; filename: string }[] = []
   for (const entry of entries) {
     const key = `${entry.root}/${entry.path}`
     if (seen.has(key)) throw new Error('恢复点文件身份重复。')
@@ -384,33 +425,62 @@ const verifyEntries = async (
       throw new Error('恢复点父目录清单无效。')
     const current = actual.get(key)
     if (!current || current.kind !== entry.kind) throw new Error('恢复点目录校验失败或文件类型冲突。')
-    const filename = await safeEntryPath(root.target, entry.path)
+    const filename = await safeEntryPath(root.target, entry.path, checkedDirectories)
     if (!backupStorage && current.mode !== entry.mode && entry.kind !== 'symlink')
       throw new Error('恢复点权限校验失败。')
     if (entry.kind === 'directory') directories.add(key)
     else if (entry.kind === 'symlink') {
       if (entry.link === undefined || current.link !== entry.link) throw new Error('恢复点链接校验失败。')
     } else {
-      if (
-        current.size !== entry.size ||
-        (await lstat(filename)).nlink !== 1 ||
-        (await fileDigest(filename)) !== entry.sha256
-      )
-        throw new Error('恢复点内容校验失败。')
-      if (entry.sqlite) verifySqliteSnapshot(filename)
+      if (current.size !== entry.size) throw new Error('恢复点内容校验失败。')
+      files.push({ entry, filename })
     }
   }
+  // Content last, a few files at a time; the reported failure is still the first one in manifest order.
+  await runBounded(files.length, DIGEST_CONCURRENCY, async (index) => {
+    const { entry, filename } = files[index]!
+    if ((await lstat(filename)).nlink !== 1 || (await fileDigest(filename)) !== entry.sha256)
+      throw new Error('恢复点内容校验失败。')
+    if (entry.sqlite) verifySqliteSnapshot(filename)
+  })
 }
 
-export async function verifyUpgradeBackup(directory: string): Promise<UpgradeBackupManifest> {
-  directory = await realDirectory(directory)
-  const manifestPath = path.join(directory, 'manifest.json')
+/** Reads the manifest once and checks those exact bytes against `manifest.sha256`. */
+const readManifest = async (directory: string): Promise<{ readonly sha256: string; readonly value: unknown }> => {
   const checksum = z
     .object({ sha256: hashSchema })
     .strict()
     .parse(await readCheckedJson(path.join(directory, 'manifest.sha256')))
-  if ((await fileDigest(manifestPath)) !== checksum.sha256) throw new Error('恢复点清单校验失败。')
-  const manifest = UpgradeBackupManifestSchema.parse(await readCheckedJson(manifestPath))
+  const handle = await open(path.join(directory, 'manifest.json'), constants.O_RDONLY | constants.O_NOFOLLOW)
+  let bytes: Buffer
+  try {
+    const info = await handle.stat()
+    if (!info.isFile() || info.nlink !== 1) throw new Error('升级状态文件路径冲突。')
+    bytes = await handle.readFile()
+  } finally {
+    await handle.close()
+  }
+  const sha256 = createHash('sha256').update(bytes).digest('hex')
+  if (sha256 !== checksum.sha256) throw new Error('恢复点清单校验失败。')
+  return { sha256, value: JSON.parse(bytes.toString('utf8')) }
+}
+
+/**
+ * Full verification: manifest checksum and schema, the whole stored tree, every file's SHA-256 and every SQLite
+ * snapshot's integrity. Restore always runs this. A failure also drops the point's reuse record, so the next
+ * startup cannot take the quick path on a point already known to be bad.
+ */
+export async function verifyUpgradeBackup(directory: string): Promise<UpgradeBackupManifest> {
+  directory = await realDirectory(directory)
+  try {
+    return await verifyStoredBackup(directory)
+  } catch (error) {
+    await rm(path.join(directory, VERIFIED_RECORD), { force: true }).catch(() => undefined)
+    throw error
+  }
+}
+const verifyStoredBackup = async (directory: string): Promise<UpgradeBackupManifest> => {
+  const manifest = UpgradeBackupManifestSchema.parse((await readManifest(directory)).value)
   const keys = new Set<string>()
   for (const root of manifest.roots) {
     if (keys.has(root.key) || !path.isAbsolute(root.target) || path.resolve(root.target) !== root.target)
@@ -424,6 +494,117 @@ export async function verifyUpgradeBackup(directory: string): Promise<UpgradeBac
     throw new Error('恢复点根目录清单校验失败。')
   const stored = manifest.roots.map((root) => ({ ...root, target: path.join(directory, 'roots', root.key) }))
   await verifyEntries(stored, manifest.entries, true)
+  return manifest
+}
+
+/*
+ * Reuse record. A restore point's ID depends only on the release, runtime fingerprint and roots, so every restart of
+ * the same version finds the point it made on first start. Re-hashing a whole data root on each restart costs minutes
+ * on a large instance and proves nothing new: a published point is never written again.
+ *
+ * After a full verification passes, `verified.json` records the manifest checksum, the point directory's identity and
+ * each stored entry's modification time (sizes are already in the manifest). A restart then only compares metadata:
+ * same manifest bytes, every entry present with the same type, size and modification time, no added or removed
+ * entries (directory modification times change with their listings). Any difference falls back to the full
+ * verification, which also rewrites the record.
+ *
+ * What the quick check cannot see is content damaged without touching metadata (bit rot, a same-size overwrite with
+ * the old time restored). Such damage surfaces when the point is actually used: restoreUpgradeBackup always runs the
+ * full verification first, and stops before moving any live data if it fails.
+ */
+const VERIFIED_RECORD = 'verified.json'
+const verifiedRecordSchema = z
+  .object({
+    format: z.literal('nxt.upgrade-backup-verified'),
+    version: z.literal(1),
+    backupId: backupIdSchema,
+    manifestSha256: hashSchema,
+    // Only ino is compared: a removable disk can get a new device number on each mount.
+    directory: z.object({ dev: z.number(), ino: z.number() }).strict(),
+    verifiedAt: z.number().int().nonnegative(),
+    // mtimeMs of `roots/`, then of `roots/<key>` in manifest root order.
+    roots: z.array(z.number()),
+    // mtimeMs of each manifest entry, in manifest order.
+    entries: z.array(z.number()),
+  })
+  .strict()
+type VerifiedRecord = z.infer<typeof verifiedRecordSchema>
+
+/** lstat-only metadata of a stored point; throws when an entry is missing or no longer matches its manifest shape. */
+const storedMetadata = async (
+  directory: string,
+  manifest: UpgradeBackupManifest,
+): Promise<Pick<VerifiedRecord, 'roots' | 'entries'>> => {
+  const realDirectoryTime = async (filename: string): Promise<number> => {
+    const info = await lstat(filename)
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('恢复点目录结构无效。')
+    return info.mtimeMs
+  }
+  const rootsDirectory = path.join(directory, 'roots')
+  const roots = [await realDirectoryTime(rootsDirectory)]
+  for (const root of manifest.roots) roots.push(await realDirectoryTime(path.join(rootsDirectory, root.key)))
+  const entries = new Array<number>(manifest.entries.length)
+  // Parents precede children in the manifest; a symlinked parent fails on its own entry before anything below it.
+  for (const [index, entry] of manifest.entries.entries()) {
+    const info = await lstat(path.join(rootsDirectory, entry.root, entry.path))
+    const matches =
+      entry.kind === 'directory'
+        ? info.isDirectory()
+        : entry.kind === 'symlink'
+          ? info.isSymbolicLink()
+          : info.isFile() && info.size === entry.size && info.nlink === 1
+    if (!matches) throw new Error('恢复点目录校验失败或文件类型冲突。')
+    entries[index] = info.mtimeMs
+  }
+  return { roots, entries }
+}
+const sameNumbers = (a: readonly number[], b: readonly number[]): boolean =>
+  a.length === b.length && a.every((value, index) => value === b[index])
+
+/** The quick restart check; undefined means "run the full verification", never "the point is bad". */
+const reusableBackup = async (directory: string): Promise<UpgradeBackupManifest | undefined> => {
+  try {
+    directory = await realDirectory(directory)
+    const record = verifiedRecordSchema.parse(await readCheckedJson(path.join(directory, VERIFIED_RECORD)))
+    const manifest = await readManifest(directory)
+    if (record.manifestSha256 !== manifest.sha256 || (await lstat(directory)).ino !== record.directory.ino)
+      return undefined
+    const value = UpgradeBackupManifestSchema.parse(manifest.value)
+    if (value.backupId !== record.backupId) return undefined
+    const current = await storedMetadata(directory, value)
+    return sameNumbers(current.roots, record.roots) && sameNumbers(current.entries, record.entries) ? value : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Full verification, then a reuse record taken from metadata that stayed the same throughout it. */
+const verifyAndRecordBackup = async (directory: string): Promise<UpgradeBackupManifest> => {
+  directory = await realDirectory(directory)
+  const before = await readManifest(directory)
+    .then(async ({ value }) => storedMetadata(directory, UpgradeBackupManifestSchema.parse(value)))
+    .catch(() => undefined)
+  const manifest = await verifyUpgradeBackup(directory)
+  try {
+    const { sha256 } = await readManifest(directory)
+    const after = await storedMetadata(directory, manifest)
+    if (before === undefined || !sameNumbers(before.roots, after.roots) || !sameNumbers(before.entries, after.entries))
+      return manifest
+    const info = await lstat(directory)
+    const record: VerifiedRecord = {
+      format: 'nxt.upgrade-backup-verified',
+      version: 1,
+      backupId: manifest.backupId,
+      manifestSha256: sha256,
+      directory: { dev: info.dev, ino: info.ino },
+      verifiedAt: Date.now(),
+      ...after,
+    }
+    await writeUpgradeJson(path.join(directory, VERIFIED_RECORD), record)
+  } catch (error) {
+    // Without a record the next start verifies in full again; the point itself is fine.
+    console.warn('[nekro-nxt] 无法记录恢复点校验结果，下次启动会重新完整校验：', error)
+  }
   return manifest
 }
 
@@ -465,7 +646,8 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
       continue
     }
     if (!(await exists(directory))) break
-    const existing = await verifyUpgradeBackup(directory)
+    // Restarting the same version lands here every time; see VERIFIED_RECORD for why metadata suffices.
+    const existing = (await reusableBackup(directory)) ?? (await verifyAndRecordBackup(directory))
     assertIdentity(existing)
     return existing
   }
@@ -551,7 +733,8 @@ export async function createUpgradeBackup(options: UpgradeBackupOptions): Promis
     await writeUpgradeJson(path.join(staging, 'manifest.sha256'), {
       sha256: await fileDigest(path.join(staging, 'manifest.json')),
     })
-    await verifyUpgradeBackup(staging)
+    // rename keeps the directory's inode and every entry's metadata, so the record stays valid once published.
+    await verifyAndRecordBackup(staging)
     await syncTreeDirectories(staging)
     options.signal?.throwIfAborted()
     if (await exists(destination)) throw new Error('恢复点发布路径冲突。')
@@ -666,6 +849,8 @@ export async function restoreUpgradeBackup(options: RestoreUpgradeBackupOptions)
   const backupId = backupIdSchema.parse(options.backupId)
   const backupRoot = await prepareUpgradeBackupDirectory(options.dataRoot)
   const directory = path.join(await prepareUpgradeBackupStore(options.dataRoot, options.storeDirectory), backupId)
+  // Always the full verification, never the restart quick check: this is where silent content damage must surface,
+  // before any live data is moved aside.
   const manifest = await verifyUpgradeBackup(directory)
   if (manifest.backupId !== backupId) throw new Error('恢复点身份与路径不匹配。')
   let externalRoots = options.externalRoots
