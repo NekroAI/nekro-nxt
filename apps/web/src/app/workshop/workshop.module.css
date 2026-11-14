@@ -800,6 +800,22 @@
   background: var(--accent-fill-grad-hover);
 }
 
+.updateMark:disabled {
+  cursor: default;
+}
+
+/* The community check sits in the meta line: a small icon button that keeps the line's height. */
+.syncCheck {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-block: calc(var(--s-1) * -1);
+}
+
+.syncFailed {
+  color: var(--bad);
+}
+
 .versionCell {
   display: grid;
   gap: var(--s-1);

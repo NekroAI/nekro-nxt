@@ -70,13 +70,13 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
   registerCommunityPersonaRoutes(context)
   const disposeFeedback = registerCommunityFeedbackRoutes(context)
   const checkSync = () => runtime.communitySync.check()
-  // 每天检查一次社区更新；失败静默，下次打开社区时会再检查。
+  // 每 6 小时检查一次社区更新；失败静默，打开扩展详情或社区更新页时会按需再检查。
   const timer = setInterval(() => {
     void checkSync().catch(() => undefined)
     void runtime.feedback.sync().catch(() => undefined)
   }, UPDATE_CHECK_INTERVAL_MS)
   timer.unref()
-  // 启动后先查一次，不必等满一天；稍等片刻，不和启动时的其他工作抢网络。没有和社区关联的扩展时不查。
+  // 启动后先查一次，不必等满 6 小时；稍等片刻，不和启动时的其他工作抢网络。没有和社区关联的扩展时不查。
   const first = setTimeout(() => {
     if (runtime.repository.listExtensionCommunityLinks().length === 0) return
     void checkSync().catch(() => undefined)
@@ -141,8 +141,20 @@ export function registerCommunityRoutes(context: HostRouteContext): () => void {
       }
       try {
         const url = new URL(req.url ?? '/', 'http://localhost')
-        const cached = url.searchParams.get('refresh') === '1' ? undefined : runtime.communitySync.cached()
-        writeContractJson(res, 200, HostApiContracts.listCommunitySync, cached ?? (await checkSync()))
+        const params = HostApiContracts.listCommunitySync.params.safeParse(Object.fromEntries(url.searchParams))
+        if (!params.success) {
+          writeError(res, 400, 'invalid-request', 'Invalid community sync query.')
+          return
+        }
+        const { refresh, maxAge } = params.data
+        writeContractJson(
+          res,
+          200,
+          HostApiContracts.listCommunitySync,
+          refresh === '1'
+            ? await checkSync()
+            : await runtime.communitySync.current(maxAge === undefined ? undefined : maxAge * 1000),
+        )
       } catch (error) {
         communityFailure(res, error, 'community-request-failed')
       }

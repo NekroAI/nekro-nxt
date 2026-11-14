@@ -1,7 +1,7 @@
 import { useGo } from '../model/nav.js'
 import { LogsButton } from '../logs/logs-button.js'
 import { CompatibilityNotices } from '../system/compatibility.js'
-import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Pencil, Share2, Trash2 } from 'lucide-react'
+import { ArrowUpCircle, Download, GitBranch, MoreHorizontal, Pencil, RefreshCw, Share2, Trash2 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { saveBlob } from '../../save-file.js'
@@ -34,6 +34,7 @@ import {
   Dialog,
   ExtensionIcon,
   Field,
+  IconButton,
   Input,
   MainContent,
   Menu,
@@ -43,6 +44,7 @@ import {
   PropertyRow,
   Pressable,
   Select,
+  Spinner,
   Switch,
   SwitchRow,
   TabStrip,
@@ -77,7 +79,7 @@ import { ConfigHistory, useConfigVersions } from './config-history.js'
 import { ExtensionData } from './extension-data.js'
 import { LineageView } from './lineage-view.js'
 import { PublishDialog } from './publish-dialog.js'
-import { needsAction, useCommunitySync, useCommunityUpdate } from './updates-view.js'
+import { describeSync, needsAction, useCommunityCheck, useCommunitySync, useCommunityUpdate } from './updates-view.js'
 import { useVersionText, type VersionText } from './version-text.js'
 import { AddonLink, addonStateLabel, addonUsable } from '../settings/addons-section.js'
 import styles from './workshop.module.css'
@@ -151,9 +153,21 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
   const current = installed ?? extension.revisions.findLast(usable) ?? latest
   const unsupported = extension.revisions.filter((item) => !usable(item)).length
   const communityRelease = current?.releases.find((release) => release.via === 'install')
+  // Installed from or published to the community: opening the page checks for a newer release when the last check is old.
+  const linked = extension.revisions.some((revision) => revision.releases.length > 0)
   const sync = useCommunitySync()
-  const offered = sync.items.find((item) => item.extensionId === extension.id && needsAction(item))
-  const communityUpdate = useCommunityUpdate(sync.reload)
+  const check = useCommunityCheck(linked)
+  const known = (check.sync?.checkedAt ?? 0) >= (sync.checkedAt ?? 0) && check.sync ? check.sync : sync
+  const synced = known.items.find((item) => item.extensionId === extension.id)
+  const offered = synced && needsAction(synced) ? synced : undefined
+  const communityUpdate = useCommunityUpdate(() => {
+    sync.reload()
+    return check.load('cached')
+  })
+  const checkNow = async () => {
+    const item = (await check.load('force'))?.items.find((entry) => entry.extensionId === extension.id)
+    if (item && !needsAction(item) && !item.delisted) toast(item.dismissed ? '已保留本机' : describeSync(item).label)
+  }
   // Revising goes through an agent that can create: the one that made it, or else the first one with a channel.
   const reviser =
     agents.find(
@@ -170,7 +184,16 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             <Chip tone={usage.tone} dot>
               {usage.label}
             </Chip>
-            {offered ? (
+            {offered?.status === 'remote-ahead' ? (
+              <Pressable
+                className={styles.updateMark}
+                disabled={communityUpdate.busy === extension.id}
+                onClick={() => communityUpdate.request(offered)}
+              >
+                {communityUpdate.busy === extension.id ? <Spinner /> : <ArrowUpCircle size={13} aria-hidden="true" />}
+                {offered.latest?.number === undefined ? '更新' : `更新到 #${offered.latest.number}`}
+              </Pressable>
+            ) : offered ? (
               <Pressable
                 className={styles.updateMark}
                 onClick={() => {
@@ -179,8 +202,18 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                 }}
               >
                 <ArrowUpCircle size={13} aria-hidden="true" />
-                {offered.status === 'remote-ahead' ? '有新版本' : '社区有新版本'}
+                社区有新版本
               </Pressable>
+            ) : null}
+            {synced?.delisted ? (
+              <span title={synced.delistedReason ? `下架原因：${synced.delistedReason}` : undefined}>
+                <Chip tone="bad">已从社区下架</Chip>
+              </span>
+            ) : null}
+            {synced?.releaseWithdrawn && !synced.dismissed ? (
+              <span title="作者已撤回本机这次发布">
+                <Chip tone="warn">发布已撤回</Chip>
+              </span>
             ) : null}
           </>
         }
@@ -199,6 +232,33 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
             ) : (
               <span>{extension.createdByAgent ? `由${extension.createdByAgent}创造` : '本地导入'}</span>
             )}
+            {linked || synced ? (
+              <span className={styles.syncCheck}>
+                <IconButton
+                  size="small"
+                  label="检查更新"
+                  title={
+                    check.checking
+                      ? '正在检查更新'
+                      : check.error
+                        ? `检查失败：${check.error}`
+                        : known.checkedAt
+                          ? `检查更新 · 上次检查 ${relativeTime(known.checkedAt)}`
+                          : '检查更新'
+                  }
+                  aria-busy={check.checking || undefined}
+                  disabled={check.checking}
+                  onClick={() => void checkNow()}
+                >
+                  {check.checking ? <Spinner /> : <RefreshCw size={14} aria-hidden="true" />}
+                </IconButton>
+                {check.error && !check.checking ? (
+                  <span className={styles.syncFailed} title={check.error}>
+                    检查失败
+                  </span>
+                ) : null}
+              </span>
+            ) : null}
           </>
         }
         actions={

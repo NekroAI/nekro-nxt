@@ -5099,7 +5099,13 @@ export const HostApiContracts = {
     timeoutMs: 60_000,
     method: 'GET',
     path: '/api/community/sync',
-    params: z.object({ refresh: z.enum(['1']).optional() }).strict(),
+    /**
+     * `refresh=1` always asks the community; `maxAge` (seconds) reuses the last check while it is younger than that.
+     * With neither, the last check is reused whatever its age, and the community is asked only when there is none.
+     */
+    params: z
+      .object({ refresh: z.enum(['1']).optional(), maxAge: z.coerce.number().int().nonnegative().optional() })
+      .strict(),
     request: NoRequestBodySchema,
     response: CommunitySyncSchema,
     error: HostApiErrorSchema,

@@ -4,7 +4,7 @@ import { HostApiContracts } from '@nekro-nxt/contracts'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { createNekroHostApi } from '../src/host-api.js'
 
@@ -116,6 +116,47 @@ it('serves community catalog reads from the instance cache, refreshes on request
       status: 502,
       body: { error: { code: 'community-unreachable' } },
     })
+  } finally {
+    api.dispose()
+    await context.fiber.dispose()
+    await runtime.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+it('checks community updates again only when the last check is older than the asked age', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'nxt-host-community-sync-'))
+  const runtime = await NekroRuntime.create({
+    coreDatabasePath: path.join(directory, 'core.sqlite'),
+    sessionDatabasePath: path.join(directory, 'sessions.sqlite'),
+    assetRoot: path.join(directory, 'assets'),
+    extensionDataRoot: path.join(directory, 'extensions'),
+    extensionCacheRoot: path.join(directory, 'cache'),
+    community: {
+      url: 'https://community.test',
+      fetch: () => Promise.reject(new Error('No extension is linked, so the community is never asked.')),
+    },
+  })
+  const context = new Context()
+  await context.plugin(WebServer, { host: '127.0.0.1', port: 0 })
+  const api = createNekroHostApi(context.webServer, runtime)
+  const base = `http://127.0.0.1:${api.port}`
+  const checks = vi.spyOn(runtime.communitySync, 'check')
+  const get = async (search: string) => {
+    const response = await fetch(`${base}/api/community/sync${search}`)
+    return { status: response.status, body: (await response.json()) as unknown }
+  }
+  try {
+    const first = HostApiContracts.listCommunitySync.parseResponse((await get('?maxAge=3600')).body)
+    expect(checks).toHaveBeenCalledTimes(1)
+    expect(HostApiContracts.listCommunitySync.parseResponse((await get('?maxAge=3600')).body)).toEqual(first)
+    expect(HostApiContracts.listCommunitySync.parseResponse((await get('')).body)).toEqual(first)
+    expect(checks).toHaveBeenCalledTimes(1)
+    await get('?maxAge=0')
+    expect(checks).toHaveBeenCalledTimes(2)
+    await get('?refresh=1')
+    expect(checks).toHaveBeenCalledTimes(3)
+    expect(await get('?maxAge=soon')).toMatchObject({ status: 400, body: { error: { code: 'invalid-request' } } })
   } finally {
     api.dispose()
     await context.fiber.dispose()

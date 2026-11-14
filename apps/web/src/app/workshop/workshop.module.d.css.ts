@@ -74,6 +74,8 @@ declare const styles: {
   readonly startActions: string
   readonly startFoot: string
   readonly subgroup: string
+  readonly syncCheck: string
+  readonly syncFailed: string
   readonly taskGrid: string
   readonly taskSide: string
   readonly testSecret: string

@@ -2494,6 +2494,48 @@ describe('community sync', () => {
   })
 })
 
+describe('community sync freshness', () => {
+  it('reuses the last check while it is younger than the asked age and checks again once it is older', async () => {
+    const runtime = await createRuntime()
+    try {
+      let now = 1_000_000
+      let checks = 0
+      const sync = new CommunitySyncService({
+        repository: runtime.repository,
+        community: {
+          communityUrl: 'https://community.example.test',
+          status: () => Promise.resolve({ account: null }),
+          mine: () => Promise.resolve([]),
+          setAttention: () => undefined,
+          checkUpdates: () => {
+            checks += 1
+            return Promise.resolve(new Map())
+          },
+        },
+        lineage: runtime.extensionService,
+        now: () => now,
+      })
+      const hour = 60 * 60_000
+
+      // Nothing checked yet: any age asks the community.
+      expect((await sync.current(hour)).checkedAt).toBe(1_000_000)
+      expect(checks).toBe(1)
+      now += hour - 1
+      expect((await sync.current(hour)).checkedAt).toBe(1_000_000)
+      expect(checks).toBe(1)
+      now += 1
+      expect((await sync.current(hour)).checkedAt).toBe(1_000_000 + hour)
+      expect(checks).toBe(2)
+      // Without an age the last check is reused however old it is.
+      now += 10 * hour
+      expect((await sync.current()).checkedAt).toBe(1_000_000 + hour)
+      expect(checks).toBe(2)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+})
+
 describe('turn requester', () => {
   /** A runtime with one group channel whose turn opened on `event`; `mbr_admin` is an administrator. */
   const portFor = (event: { senderMemberId?: string; facts?: Record<string, unknown> }) => {

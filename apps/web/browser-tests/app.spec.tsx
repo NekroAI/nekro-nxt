@@ -1793,7 +1793,7 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/workshop/extensions/${local.id}`,
       async (page) => {
-        await playwrightExpect(page.getByRole('button', { name: '有新版本' })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '更新到 #5' })).toBeVisible()
         const installation = page.getByRole('region', { name: '安装' })
         await playwrightExpect(installation.getByText('社区有新版本 #5')).toBeVisible()
         await playwrightExpect(installation).toContainText('收集更严格')
@@ -1803,7 +1803,7 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByLabel('1 个扩展有更新')).toHaveText('1')
         await page.screenshot({ path: '.local/extension-update-1440.png' })
         await page.setViewportSize({ width: 375, height: 812 })
-        await playwrightExpect(page.getByRole('button', { name: '有新版本' })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '更新到 #5' })).toBeVisible()
         await page.screenshot({ path: '.local/extension-update-375.png', fullPage: true })
         await page.setViewportSize({ width: 1440, height: 900 })
         await installation.getByRole('button', { name: '更新' }).click()
@@ -1860,6 +1860,152 @@ test.describe('NekroNxt browser projections', () => {
           return request.fulfill({ json: { message: '已更新到社区的新版本' } })
         })
       },
+    )
+  })
+
+  test('shows the community update state on an extension installed from the community and checks on demand', async () => {
+    const local = browserSnapshot.extensions[0]!
+    const current = local.revisions.at(-1)!
+    const snapshot = {
+      ...browserSnapshot,
+      extensions: [
+        {
+          ...local,
+          revisions: [
+            ...local.revisions.slice(0, -1),
+            {
+              ...current,
+              releases: [
+                {
+                  communityUrl: 'https://community.example.test',
+                  releaseId: 'rel_01m63e0ee09q9kad83jrjvdn44',
+                  number: 4,
+                  publisherHandle: 'demo-author',
+                  via: 'install',
+                  recordedAt: 1_725_000_000_000,
+                },
+              ],
+            },
+          ],
+        },
+        ...browserSnapshot.extensions.slice(1),
+      ],
+    }
+    const searches: string[] = []
+    const updates: string[] = []
+    let state: 'same' | 'ahead' | 'failed' | 'delisted' = 'same'
+    const shot = (name: string) => `.local/extension-sync-${name}.png`
+    const syncCheck = (page: Page) => page.getByRole('button', { name: '检查更新' })
+    await withProductPage(
+      `/workshop/extensions/${local.id}`,
+      async (page) => {
+        // Opening the page asks for a check no older than an hour; the answer says it is current.
+        await playwrightExpect(syncCheck(page)).toBeEnabled()
+        // StrictMode runs the opening effect twice in development; both ask with the same age.
+        expect(new Set(searches)).toEqual(new Set(['?maxAge=3600']))
+        await playwrightExpect(syncCheck(page)).toHaveAttribute('title', /^检查更新 · 上次检查 \d+ 分钟前$/u)
+        await playwrightExpect(page.getByRole('button', { name: /更新到/u })).toHaveCount(0)
+        await page.screenshot({ path: shot('same-1440') })
+
+        // Checking again always asks the community; a newer release turns into a direct update.
+        state = 'ahead'
+        await syncCheck(page).click()
+        const update = page.getByRole('button', { name: '更新到 #5' })
+        await playwrightExpect(update).toBeVisible()
+        expect(searches.at(-1)).toBe('?refresh=1')
+        await page.screenshot({ path: shot('ahead-1440') })
+        await page.setViewportSize({ width: 390, height: 844 })
+        await playwrightExpect(update).toBeVisible()
+        await playwrightExpect(syncCheck(page)).toBeVisible()
+        await page.screenshot({ path: shot('ahead-390') })
+        await page.setViewportSize({ width: 1440, height: 900 })
+        await update.click()
+        const dialog = page.getByRole('dialog')
+        await playwrightExpect(dialog).toContainText('新发布新增权限：查看频道内每条新消息')
+        await dialog.getByRole('button', { name: '更新' }).click()
+        await playwrightExpect.poll(() => updates).toEqual([local.id])
+
+        // A failed check is a short mark next to the button; the button retries.
+        state = 'failed'
+        await syncCheck(page).click()
+        await playwrightExpect(page.getByText('检查失败', { exact: true })).toBeVisible()
+        await playwrightExpect(syncCheck(page)).toHaveAttribute('title', /^检查失败：无法连接社区/u)
+        await page.screenshot({ path: shot('failed-1440') })
+
+        state = 'delisted'
+        await syncCheck(page).click()
+        await playwrightExpect(page.getByText('检查失败', { exact: true })).toBeHidden()
+        await playwrightExpect(page.getByText('已从社区下架')).toBeVisible()
+        await page.screenshot({ path: shot('delisted-1440') })
+      },
+      snapshot,
+      async (page) => {
+        await page.route('**/api/community/status', (request) =>
+          request.fulfill({
+            json: {
+              communityUrl: 'https://community.example.test',
+              environment: 'staging',
+              account: null,
+              signedInAt: null,
+              updatesAvailable: 0,
+            },
+          }),
+        )
+        await page.route(
+          (url) => url.pathname === '/api/community/sync',
+          (request) => {
+            const search = new URL(request.request().url()).search
+            searches.push(search)
+            if (state === 'failed')
+              return request.fulfill({
+                status: 502,
+                json: { error: { code: 'community-unreachable', message: '无法连接社区，请检查网络后再试。' } },
+              })
+            const ahead = state === 'ahead' && updates.length === 0
+            return request.fulfill({
+              json: {
+                checkedAt: search === '' ? Date.now() - 3 * 60_000 : Date.now() - 5 * 60_000,
+                items: [
+                  {
+                    extensionId: local.id,
+                    displayName: local.displayName,
+                    communityUrl: 'https://community.example.test',
+                    role: 'subscriber',
+                    currentRevisionId: current.id,
+                    currentVersionLabel: 'v3',
+                    currentRelease: { id: 'rel_01m63e0ee09q9kad83jrjvdn44', number: 4 },
+                    status: ahead ? 'remote-ahead' : 'same',
+                    found: true,
+                    delisted: state === 'delisted',
+                    delistedReason: state === 'delisted' ? '作者下架了这个扩展' : null,
+                    releaseWithdrawn: false,
+                    latest: {
+                      id: ahead ? 'rel_01m63e0ee09q9kad83jrjvdn66' : 'rel_01m63e0ee09q9kad83jrjvdn44',
+                      reviewStatus: 'passed',
+                      rating: null,
+                      permissions: [],
+                      packageSize: 1024,
+                      requiresSdk: null,
+                      notes: '收集更严格：截图和游戏画面不再收进库。',
+                      createdAt: Date.now() - 2 * 24 * 60 * 60 * 1000,
+                      number: ahead ? 5 : 4,
+                    },
+                    dismissed: false,
+                    addedPermissions: ahead
+                      ? [{ key: 'inboundHook', level: 'high', label: '查看频道内每条新消息', layer: 'agent' }]
+                      : [],
+                  },
+                ],
+              },
+            })
+          },
+        )
+        await page.route('**/api/community/sync/*/update', (request) => {
+          updates.push(new URL(request.request().url()).pathname.split('/').at(-2)!)
+          return request.fulfill({ json: { message: '已更新到社区最新发布 #5。' } })
+        })
+      },
+      /status of 502/u,
     )
   })
 

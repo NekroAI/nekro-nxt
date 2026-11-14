@@ -45,6 +45,15 @@ export class CommunitySyncService {
     return cache?.url === this.#community.communityUrl ? { checkedAt: cache.checkedAt, items: cache.items } : undefined
   }
 
+  /** The last check while it is younger than `maxAgeMs` (any age when omitted), otherwise a new one. */
+  async current(
+    maxAgeMs?: number,
+  ): Promise<{ readonly checkedAt: number; readonly items: readonly CommunitySyncItem[] }> {
+    const cache = this.cached()
+    if (cache && (maxAgeMs === undefined || this.#now() - cache.checkedAt < maxAgeMs)) return cache
+    return this.check()
+  }
+
   /** Called whenever the known sync state changes: after a check, a dismissal or a publish. */
   subscribe(listener: () => void): () => void {
     this.#listeners.add(listener)

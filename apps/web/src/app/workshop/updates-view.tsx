@@ -1,6 +1,6 @@
 import { communityReviewLabel, HostApiContracts, type CommunitySyncItem } from '@nekro-nxt/contracts'
 import { RefreshCw, Repeat2 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { callHostApi } from '../../host-api-client.js'
 import { useProductStore } from '../../product-runtime.js'
 import {
@@ -24,8 +24,53 @@ import styles from '../community/community.module.css'
 
 type Sync = { readonly checkedAt: number | null; readonly items: readonly CommunitySyncItem[] }
 
+/** Opening a page that shows update state asks the community again once the last check is older than this. */
+export const STALE_CHECK_SECONDS = 60 * 60
+
+/**
+ * The last community check, with a way to check again. `stale` reuses the last check while it is younger than
+ * {@link STALE_CHECK_SECONDS} and is what opening a page does; `force` always asks the community; `cached` only reads
+ * the last check. With `auto`, the page checks in `stale` mode when it opens.
+ */
+export function useCommunityCheck(auto: boolean) {
+  const [sync, setSync] = useState<Sync>()
+  const [error, setError] = useState<string>()
+  const [checking, setChecking] = useState(false)
+  const live = useRef(true)
+  useEffect(() => {
+    live.current = true
+    return () => {
+      live.current = false
+    }
+  }, [])
+  const load = useCallback(async (mode: 'cached' | 'stale' | 'force'): Promise<Sync | undefined> => {
+    if (mode !== 'cached') setChecking(true)
+    try {
+      const next = await callHostApi(
+        HostApiContracts.listCommunitySync,
+        mode === 'force' ? { refresh: '1' } : mode === 'stale' ? { maxAge: STALE_CHECK_SECONDS } : {},
+        undefined,
+      )
+      if (live.current) {
+        setSync(next)
+        setError(undefined)
+      }
+      return next
+    } catch (caught) {
+      if (live.current) setError(errorMessage(caught))
+      return undefined
+    } finally {
+      if (live.current) setChecking(false)
+    }
+  }, [])
+  useEffect(() => {
+    if (auto) void load('stale')
+  }, [auto, load])
+  return { sync, error, checking, load }
+}
+
 /** What a line's state means here, for the one who publishes it and for the one who follows it. */
-const describe = (
+export const describeSync = (
   item: CommunitySyncItem,
 ): { readonly label: string; readonly tone: Tone; readonly detail: string } => {
   const owner = item.role === 'owner'
@@ -70,29 +115,17 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
   const navigate = useGo()
   const extensions = useProductStore((state) => state.extensions)
   const localIcons = new Map(extensions.map((extension) => [extension.id, extension.iconUrl]))
-  const [sync, setSync] = useState<Sync>()
-  const [error, setError] = useState<string>()
-  const [checking, setChecking] = useState(false)
-
-  const load = async (refresh: boolean) => {
-    setChecking(refresh)
-    try {
-      setSync(await callHostApi(HostApiContracts.listCommunitySync, refresh ? { refresh: '1' } : {}, undefined))
-      setError(undefined)
-      onChecked?.()
-    } catch (caught) {
-      setError(errorMessage(caught))
-    } finally {
-      setChecking(false)
-    }
+  const { sync, error, checking, load: read } = useCommunityCheck(false)
+  const load = async (mode: 'cached' | 'stale' | 'force') => {
+    if (await read(mode)) onChecked?.()
   }
   useEffect(() => {
-    void load(false)
+    void load('stale')
   }, [])
 
   const { busy, request, dismiss, dialog } = useCommunityUpdate(
-    () => load(true),
-    () => load(false),
+    () => load('force'),
+    () => load('cached'),
   )
 
   const attention = sync?.items.filter(needsAction).length
@@ -102,7 +135,7 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
         title="社区更新"
         subtitle={`${sync?.checkedAt ? `上次检查 ${relativeTime(sync.checkedAt)}` : '从社区安装和发布到社区的扩展'}${attention ? ` · ${attention} 个需要处理` : ''}`}
         actions={
-          <Button size="small" icon={<RefreshCw size={14} />} busy={checking} onClick={() => void load(true)}>
+          <Button size="small" icon={<RefreshCw size={14} />} busy={checking} onClick={() => void load('force')}>
             检查更新
           </Button>
         }
@@ -125,7 +158,7 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
       ) : (
         <div className={styles.cardList}>
           {sync?.items.map((item, index) => {
-            const state = describe(item)
+            const state = describeSync(item)
             const review = item.latest ? communityReviewLabel(item.latest.reviewStatus) : undefined
             const latestNumber = item.latest?.number === undefined ? '' : ` #${item.latest.number}`
             return (
@@ -280,8 +313,8 @@ export function useCommunityUpdate(onUpdated: () => unknown, onDismissed: () => 
  * counts lines that need attention, and the bell learns of new ones as they come; the list is only asked for when
  * there are some, and asked again after a new or switched version, or a new count.
  */
-export function useCommunitySync(): { readonly items: readonly CommunitySyncItem[]; readonly reload: () => void } {
-  const [items, setItems] = useState<readonly CommunitySyncItem[]>([])
+export function useCommunitySync(): Sync & { readonly reload: () => void } {
+  const [sync, setSync] = useState<Sync>({ checkedAt: null, items: [] })
   const [asked, setAsked] = useState(0)
   const installed = useProductStore((state) =>
     state.extensions
@@ -292,20 +325,20 @@ export function useCommunitySync(): { readonly items: readonly CommunitySyncItem
   const noticed = useAttention().find((item) => item.kind === 'extension-update')?.id
   useEffect(() => {
     if (available === 0 && noticed === undefined) {
-      setItems([])
+      setSync({ checkedAt: null, items: [] })
       return undefined
     }
     let live = true
     callHostApi(HostApiContracts.listCommunitySync, {}, undefined)
-      .then((sync) => {
-        if (live) setItems(sync.items)
+      .then((next) => {
+        if (live) setSync(next)
       })
       .catch(() => undefined)
     return () => {
       live = false
     }
   }, [installed, available, noticed, asked])
-  return { items, reload: () => setAsked((count) => count + 1) }
+  return { ...sync, reload: () => setAsked((count) => count + 1) }
 }
 
 /**
