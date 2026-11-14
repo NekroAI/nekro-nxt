@@ -1157,11 +1157,7 @@ function Installation({
       <PropertyList>
         {offered?.latest ? (
           <PropertyRow
-            label={
-              offered.status === 'remote-ahead'
-                ? '社区有新版本'
-                : '社区有新版本，本机也有修改'
-            }
+            label={offered.status === 'remote-ahead' ? '社区有新版本' : '社区有新版本，本机也有修改'}
             description={[
               `${relativeTime(offered.latest.createdAt)}发布`,
               clipNotes(offered.latest.notes),

@@ -180,9 +180,7 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
                   </div>
                   {state.detail ? <span className={styles.itemMeta}>{state.detail}</span> : null}
                   <span className={styles.itemMeta}>
-                    {item.latest
-                      ? `社区最新发布：${relativeTime(item.latest.createdAt)}`
-                      : '社区上没有发布'}
+                    {item.latest ? `社区最新发布：${relativeTime(item.latest.createdAt)}` : '社区上没有发布'}
                     {item.latest && review && item.status !== 'same' ? ` · ${review.label}` : ''}
                   </span>
                   {item.status === 'remote-ahead' && item.addedPermissions.length > 0 ? (
