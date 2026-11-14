@@ -1170,7 +1170,7 @@ test.describe('NekroNxt browser projections', () => {
         const timeline = page.getByRole('group', { name: '版本谱系' })
         const current = timeline.getByRole('button', { name: /正在使用$/u })
         await playwrightExpect(current).toBeVisible()
-        await playwrightExpect(current).toContainText('社区 #2')
+        await playwrightExpect(current).toContainText('社区')
         await timeline.getByRole('button').nth(1).click()
         // The picked version offers to be installed beside the timeline.
         await playwrightExpect(page.getByRole('button', { name: '安装这个版本' })).toBeVisible()

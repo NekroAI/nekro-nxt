@@ -346,11 +346,11 @@ export function LineageView({
                       已保留
                     </Chip>
                   ) : null}
-                  {node.releaseNumbers.map((number) => (
-                    <Chip key={number} tone="accent" icon={<Globe size={12} />}>
-                      社区 #{number}
+                  {node.releaseNumbers.length > 0 ? (
+                    <Chip tone="accent" icon={<Globe size={12} />}>
+                      社区
                     </Chip>
-                  ))}
+                  ) : null}
                   {node.protectedBy === 'branch' ? <Chip icon={<GitBranch size={12} />}>分叉点</Chip> : null}
                 </span>
               </Pressable>
@@ -563,7 +563,6 @@ function VersionDetail({
         {revision.releases.map((release) => (
           <Chip key={`${release.communityUrl}:${release.releaseId}`} tone="accent">
             {release.via === 'publish' ? '已发布' : '社区'}
-            {release.number ? ` #${release.number}` : ''}
           </Chip>
         ))}
         {!usable ? <Chip tone="warn">格式不受支持</Chip> : null}

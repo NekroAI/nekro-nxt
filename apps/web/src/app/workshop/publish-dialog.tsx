@@ -243,7 +243,7 @@ export function PublishDialog({
         }
       >
         <p>
-          <Chip tone={label.tone}>{label.label}</Chip> 发布 #{published.releaseNumber} · 本机的{versionName}
+          <Chip tone={label.tone}>{label.label}</Chip> 本机的{versionName}
         </p>
         <p>
           {published.reviewStatus === 'rejected'
@@ -319,7 +319,7 @@ export function PublishDialog({
         <>
           <p>
             以 @{account.handle} 发布 <b>{versionName}</b>
-            {previous?.number ? `，接在社区发布 #${previous.number} 之后` : '，这是它在社区上的第一次发布'}
+            {previous?.number ? '，作为社区上的新版本' : '，这是它在社区上的第一次发布'}
             。所有人都能看到并安装它。
           </p>
           <Field label="一句话简介" hint="显示在社区列表的卡片上。">

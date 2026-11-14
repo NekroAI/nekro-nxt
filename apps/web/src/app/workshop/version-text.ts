@@ -5,7 +5,7 @@ type Revision = LocalExtensionSummary['revisions'][number]
 
 /**
  * How people tell versions apart (docs/NekroNxt界面交互模型.md §2.5): when it was saved, what changed and where it
- * came from. The lineage number and community release numbers stay in `code` for the small print.
+ * came from. The lineage number stays in `code` for the small print; community release numbers are not shown to users.
  */
 export interface VersionText {
   /** “10月11日”, with the time when another version of the line was saved the same day. */
@@ -60,7 +60,7 @@ export function describeVersion(
       ? `${author ?? '智能体'}${task?.kind === 'revise' ? '修改' : '创造'}`
       : revision.origin === 'community'
         ? release?.number
-          ? `社区发布 #${release.number}`
+          ? '社区发布'
           : '社区安装'
         : revision.origin === 'file'
           ? '文件导入'
@@ -72,7 +72,7 @@ export function describeVersion(
     source,
     title: change ? `${when} · ${change}` : `${when} 的版本`,
     short: `${new Date(revision.createdAt).getMonth() + 1}/${new Date(revision.createdAt).getDate()}`,
-    code: [revision.versionLabel, ...numbers.map((number) => `社区 #${number}`)].join(' · '),
+    code: [revision.versionLabel, ...(numbers.length > 0 ? ['社区发布'] : [])].join(' · '),
   }
 }
 
