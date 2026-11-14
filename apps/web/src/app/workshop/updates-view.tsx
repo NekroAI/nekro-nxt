@@ -160,7 +160,6 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
           {sync?.items.map((item, index) => {
             const state = describeSync(item)
             const review = item.latest ? communityReviewLabel(item.latest.reviewStatus) : undefined
-            const latestNumber = item.latest?.number === undefined ? '' : ` #${item.latest.number}`
             return (
               <article key={item.extensionId} className={styles.item} style={{ ['--i' as string]: index }}>
                 <ExtensionIcon
@@ -182,7 +181,7 @@ export function UpdatesView({ onChecked }: { readonly onChecked?: () => void }) 
                   {state.detail ? <span className={styles.itemMeta}>{state.detail}</span> : null}
                   <span className={styles.itemMeta}>
                     {item.latest
-                      ? `社区最新发布${latestNumber}，${relativeTime(item.latest.createdAt)}`
+                      ? `社区最新发布：${relativeTime(item.latest.createdAt)}`
                       : '社区上没有发布'}
                     {item.latest && review && item.status !== 'same' ? ` · ${review.label}` : ''}
                   </span>

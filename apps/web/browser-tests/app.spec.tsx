@@ -1793,9 +1793,9 @@ test.describe('NekroNxt browser projections', () => {
     await withProductPage(
       `/workshop/extensions/${local.id}`,
       async (page) => {
-        await playwrightExpect(page.getByRole('button', { name: '更新到 #5' })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '更新扩展' })).toBeVisible()
         const installation = page.getByRole('region', { name: '安装' })
-        await playwrightExpect(installation.getByText('社区有新版本 #5')).toBeVisible()
+        await playwrightExpect(installation.getByText('社区有新版本')).toBeVisible()
         await playwrightExpect(installation).toContainText('收集更严格')
         await playwrightExpect(installation).toContainText('新增权限：查看频道内每条新消息')
         const row = page.getByRole('link', { name: new RegExp(local.displayName, 'u') })
@@ -1803,7 +1803,7 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByLabel('1 个扩展有更新')).toHaveText('1')
         await page.screenshot({ path: '.local/extension-update-1440.png' })
         await page.setViewportSize({ width: 375, height: 812 })
-        await playwrightExpect(page.getByRole('button', { name: '更新到 #5' })).toBeVisible()
+        await playwrightExpect(page.getByRole('button', { name: '更新扩展' })).toBeVisible()
         await page.screenshot({ path: '.local/extension-update-375.png', fullPage: true })
         await page.setViewportSize({ width: 1440, height: 900 })
         await installation.getByRole('button', { name: '更新' }).click()
@@ -1904,13 +1904,13 @@ test.describe('NekroNxt browser projections', () => {
         // StrictMode runs the opening effect twice in development; both ask with the same age.
         expect(new Set(searches)).toEqual(new Set(['?maxAge=3600']))
         await playwrightExpect(syncCheck(page)).toHaveAttribute('title', /^检查更新 · 上次检查 \d+ 分钟前$/u)
-        await playwrightExpect(page.getByRole('button', { name: /更新到/u })).toHaveCount(0)
+        await playwrightExpect(page.getByRole('button', { name: '更新扩展' })).toHaveCount(0)
         await page.screenshot({ path: shot('same-1440') })
 
         // Checking again always asks the community; a newer release turns into a direct update.
         state = 'ahead'
         await syncCheck(page).click()
-        const update = page.getByRole('button', { name: '更新到 #5' })
+        const update = page.getByRole('button', { name: '更新扩展' })
         await playwrightExpect(update).toBeVisible()
         expect(searches.at(-1)).toBe('?refresh=1')
         await page.screenshot({ path: shot('ahead-1440') })
@@ -2002,7 +2002,7 @@ test.describe('NekroNxt browser projections', () => {
         )
         await page.route('**/api/community/sync/*/update', (request) => {
           updates.push(new URL(request.request().url()).pathname.split('/').at(-2)!)
-          return request.fulfill({ json: { message: '已更新到社区最新发布 #5。' } })
+          return request.fulfill({ json: { message: '已更新到社区最新发布。' } })
         })
       },
       /status of 502/u,

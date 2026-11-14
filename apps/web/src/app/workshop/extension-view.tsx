@@ -191,7 +191,7 @@ export function ExtensionView({ extension }: { readonly extension: LocalExtensio
                 onClick={() => communityUpdate.request(offered)}
               >
                 {communityUpdate.busy === extension.id ? <Spinner /> : <ArrowUpCircle size={13} aria-hidden="true" />}
-                {offered.latest?.number === undefined ? '更新' : `更新到 #${offered.latest.number}`}
+                更新扩展
               </Pressable>
             ) : offered ? (
               <Pressable
@@ -1159,7 +1159,7 @@ function Installation({
           <PropertyRow
             label={
               offered.status === 'remote-ahead'
-                ? `社区有新版本${offered.latest.number === undefined ? '' : ` #${offered.latest.number}`}`
+                ? '社区有新版本'
                 : '社区有新版本，本机也有修改'
             }
             description={[

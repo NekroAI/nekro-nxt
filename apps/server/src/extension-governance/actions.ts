@@ -1414,8 +1414,7 @@ export class ExtensionActionService {
     const revision = await this.#importRelease(item.latest.id, detail.publisher.handle, item.latest.number)
     const result = await this.#switch(extensionId, revision.id)
     await runtime.communitySync.check().catch(() => undefined)
-    const number = item.latest.number === undefined ? '' : ` #${item.latest.number}`
-    return { ...result, message: `已更新到社区最新发布${number}。${result.message}` }
+    return { ...result, message: `已更新到社区最新发布。${result.message}` }
   }
 
   async #communityInstall(
