@@ -28,6 +28,7 @@ import type {
 import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import {
   bindingSecretReference,
+  NxtCapabilityError,
   type NxtRequestSecret,
   type NxtServiceBackends,
   type NxtServiceBinding,
@@ -54,10 +55,39 @@ export interface NamedCredentialUse {
   readonly consumerKind: 'extension' | 'mcp'
 }
 
-/** Named credentials as extensions may use them; denied uses resolve to `undefined`. */
+/**
+ * Named credentials as extensions may use them. A credential that is gone resolves to `undefined`; one that is set but
+ * not cleared for this use says why (see `CredentialDenial`).
+ */
 export type NamedCredentialResolver = (
   use: NamedCredentialUse,
-) => { readonly value: string; readonly usage: CredentialUsage; readonly domains: readonly string[] } | undefined
+) =>
+  | { readonly value: string; readonly usage: CredentialUsage; readonly domains: readonly string[] }
+  | { readonly denied: 'scope' | 'request-only'; readonly name: string }
+  | undefined
+
+/** What code bound this way hears when a bound credential is set but not cleared for it, and what to do instead. */
+export const deniedCredentialMessage = (
+  binding: Pick<NxtServiceBinding, 'mode'>,
+  key: string,
+  denial: { readonly denied: 'scope' | 'request-only'; readonly name: string },
+  host: boolean,
+): string => {
+  const trial = binding.mode === 'dynamic' || binding.mode === 'verification'
+  if (denial.denied === 'request-only') {
+    const reason = `凭据「${denial.name}」只用于网络请求，扩展代码读不到它的值。`
+    return trial
+      ? `${reason}用 secrets.placeholder('${key}') 把它放进 http.fetch 的请求，或在 testConfig 里给 ${key} 换一个允许程序读取的凭据。`
+      : `${reason}请在扩展配置里给 ${key} 换一个允许程序读取的凭据，或请扩展作者改用 secrets.placeholder 占位符。`
+  }
+  if (host) {
+    return `凭据「${denial.name}」只对部分智能体开放，扩展的本机层读不到它。请在「设置 → 凭据」里把它的可用智能体改为全部智能体，或在扩展的本机配置里给 ${key} 换一个对全部智能体开放的凭据。`
+  }
+  const reason = `凭据「${denial.name}」不对这个智能体开放。`
+  return trial
+    ? `${reason}在 testConfig 里给 ${key} 换一个对它开放的凭据，或请管理员在「设置 → 凭据」里开放它。`
+    : `${reason}请在「设置 → 凭据」里把它开放给这个智能体，或在扩展配置里给 ${key} 换一个对它开放的凭据。`
+}
 
 export interface NxtProductFacts {
   readonly history: ChannelHistoryRepository & Pick<CoreRepository, 'getChannel' | 'getChannelMember'>
@@ -176,7 +206,8 @@ const isConversationEntry = (entry: ChannelHistoryEntry): boolean =>
  * Resolves one secret field of a binding (智能体扩展配置与凭据 C5). The field must be declared `meta.role: 'secret'`
  * in the layer it is read from. A store reference (`credential:local:`) is the field's own value; a named credential
  * (`credential:named:`) resolves only for an agent in its scope, and `program` reads need a credential that allows
- * program use. Anything else is treated as unset. `targetHost` is recorded with a request use.
+ * program use; a bound one that is not cleared throws with the reason and what to change. An empty field, or anything
+ * else, is unset. `targetHost` is recorded with a request use.
  */
 export const resolveExtensionSecret = async (
   facts: Pick<NxtProductFacts, 'resolveCredential' | 'namedCredential'>,
@@ -192,10 +223,11 @@ export const resolveExtensionSecret = async (
   if (id === undefined || facts.namedCredential === undefined) return undefined
   const agent = AgentIdSchema.safeParse(binding.agentId)
   const channel = ChannelIdSchema.safeParse(binding.channelId)
+  // The host instance of an installed extension serves every agent; its dynamic stand-in acts for the author.
+  const agentId = binding.mode === 'host' && binding.agentId === '' ? undefined : agent.success ? agent.data : undefined
   const resolved = facts.namedCredential({
     id,
-    // The host instance of an installed extension serves every agent; its dynamic stand-in acts for the author.
-    agentId: binding.mode === 'host' && binding.agentId === '' ? undefined : agent.success ? agent.data : undefined,
+    agentId,
     purpose,
     extensionId: binding.ownerKey,
     channelId: channel.success ? channel.data : undefined,
@@ -203,6 +235,10 @@ export const resolveExtensionSecret = async (
     consumerKind: 'extension',
   })
   if (resolved === undefined) return undefined
+  if ('denied' in resolved)
+    throw new NxtCapabilityError(
+      deniedCredentialMessage(binding, key, resolved, binding.mode === 'host' && agentId === undefined),
+    )
   // Program-use credentials without domains go wherever the extension's own network policy reaches.
   return resolved.usage === 'program' && resolved.domains.length === 0
     ? { value: resolved.value }
@@ -270,7 +306,7 @@ export const createNxtProductBackends = (
       targetHost: use.targetHost,
       consumerKind: 'mcp',
     })
-    if (resolved === undefined) return Promise.resolve(undefined)
+    if (resolved === undefined || 'denied' in resolved) return Promise.resolve(undefined)
     return Promise.resolve(
       resolved.usage === 'program' && resolved.domains.length === 0
         ? { value: resolved.value }

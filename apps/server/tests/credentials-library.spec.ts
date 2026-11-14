@@ -87,10 +87,10 @@ describe('credential library', () => {
     })
     const program = await library.create({ name: '程序', value: 'program-value', usage: 'program' })
     expect(library.usable(request.id, agent, 'request')).toMatchObject({ value: 'request-only-value' })
-    expect(library.usable(request.id, agent, 'program')).toHaveProperty('denied')
-    expect(library.usable(request.id, otherAgent, 'request')).toHaveProperty('denied')
+    expect(library.usable(request.id, agent, 'program')).toMatchObject({ denied: 'request-only', name: '仅请求' })
+    expect(library.usable(request.id, otherAgent, 'request')).toMatchObject({ denied: 'scope', name: '仅请求' })
     // The host instance serves every agent: only a credential open to all agents.
-    expect(library.usable(request.id, undefined, 'request')).toHaveProperty('denied')
+    expect(library.usable(request.id, undefined, 'request')).toMatchObject({ denied: 'scope', name: '仅请求' })
     expect(library.usable(program.id, undefined, 'program')).toMatchObject({ value: 'program-value' })
   })
 

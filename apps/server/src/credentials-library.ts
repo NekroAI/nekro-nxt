@@ -63,6 +63,17 @@ export interface UsableCredential {
   readonly value: string
 }
 
+/**
+ * Why a set credential was not cleared for one use: it is not open to the agent (`scope`; with no agent, it is not open
+ * to all of them), or code asked to read a credential that only goes into requests (`request-only`).
+ */
+export interface CredentialDenial {
+  readonly denied: 'scope' | 'request-only'
+  readonly name: string
+  /** One line for the log. */
+  readonly message: string
+}
+
 const sameName = (left: string, right: string): boolean => left.trim().toLowerCase() === right.trim().toLowerCase()
 
 /** The variable commands receive a credential under: program credentials that have one. */
@@ -164,20 +175,30 @@ export class CredentialLibrary {
 
   /**
    * The value for one use when the agent is in scope and the usage allows it: `program` reads need a credential that
-   * allows program use; `request` (a placeholder filled by the host) takes either. Returns `undefined` otherwise, as
-   * if nothing were set.
+   * allows program use; `request` (a placeholder filled by the host) takes either. A credential that is gone or has no
+   * value is `undefined`, as if nothing were set; one that is set but not cleared says why.
    */
   usable(
     id: CredentialId,
     agentId: AgentId | undefined,
     purpose: CredentialUsage,
-  ): UsableCredential | { readonly denied: string } | undefined {
+  ): UsableCredential | CredentialDenial | undefined {
     const record = this.get(id)
     const value = this.#values.get(id)
     if (record === undefined || value === undefined) return undefined
-    if (!this.inScope(record, agentId)) return { denied: `凭据「${record.name}」不对这个智能体开放。` }
+    if (!this.inScope(record, agentId)) {
+      const message =
+        agentId === undefined
+          ? `凭据「${record.name}」只对部分智能体开放，扩展的本机层读不到它。`
+          : `凭据「${record.name}」不对这个智能体开放。`
+      return { denied: 'scope', name: record.name, message }
+    }
     if (purpose === 'program' && record.usage !== 'program') {
-      return { denied: `凭据「${record.name}」只用于网络请求，代码读不到它的值，请改用占位符。` }
+      return {
+        denied: 'request-only',
+        name: record.name,
+        message: `凭据「${record.name}」只用于网络请求，扩展代码读不到它的值。`,
+      }
     }
     return { record, value }
   }

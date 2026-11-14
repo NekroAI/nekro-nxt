@@ -45,7 +45,7 @@ npm i -D @nekro-nxt/extension-sdk
 | 能力 | 做什么 | 需要声明 |
 | --- | --- | --- |
 | `http` | `http.fetch` 发网络请求，响应最大 32 MiB。已经拦截内网和云元数据地址，不要绕开它直接用全局 `fetch` | `network`，见[网络](#网络) |
-| `secrets` | 读取配置里的凭据字段；`secrets.placeholder` 返回占位符，NekroNXT 发请求时才替换成真值 | 配置字段 `meta.role: 'secret'` |
+| `secrets` | `secrets.get` 读取配置里凭据字段的原文：没填时得到 `undefined`；绑定的凭据「仅用于网络请求」或不对当前智能体开放时报错，写明凭据名称和改法。`secrets.placeholder` 返回占位符，NekroNXT 发请求时才替换成真值 | 配置字段 `meta.role: 'secret'` |
 | `storage` | JSON 键值存储，按智能体、频道、成员或共享分区 | `storage: { scopes, quotaBytes? }` |
 | `assets` | 生成、收录和读取图片等资源 | `assets` |
 | `image` | 读取图片的格式、尺寸、帧数 | `assets: { library }` |

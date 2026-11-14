@@ -782,7 +782,7 @@ export class NekroRuntime {
             const extension = ExtensionIdSchema.safeParse(use.extensionId)
             options.logs?.write({
               level: 'warn',
-              message: usable.denied,
+              message: usable.message,
               source: extension.success
                 ? {
                     kind: 'extension',
@@ -796,7 +796,7 @@ export class NekroRuntime {
                 ...(extension.success ? { extensionId: extension.data } : {}),
               },
             })
-            return undefined
+            return { denied: usable.denied, name: usable.name }
           }
           library.recordUse({
             credentialId: use.id,

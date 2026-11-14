@@ -828,8 +828,9 @@ export interface NxtHostService {
   }
   readonly secrets: {
     /**
-     * Reads a `meta.role: 'secret'` config field; `undefined` until the user sets it, and for a named credential that
-     * is limited to network requests or not open to this agent.
+     * Reads a `meta.role: 'secret'` config field; `undefined` until the user sets it. When the field is bound to a
+     * named credential that is limited to network requests or not open to this agent, it rejects with an error that
+     * names the credential and says what to change.
      */
     get(key: string): Promise<string | undefined>
     /**
@@ -1736,7 +1737,7 @@ const HOST_SERVICES_BY_TOPIC = {
   ],
   config: [
     'ctx.nxt.secrets.placeholder(key) / nxt.secrets.placeholder(key)：API Key、token 这类凭据优先用它。key 是配置里凭据字段的字段名（例如 apiKey），不是凭据的名称。返回一个占位字符串，放进 http.fetch 的 URL、请求头或字符串 body，宿主发出请求时才填入真实的值，并且只发往凭据允许的域名，重定向也会再检查；代码拿不到值。凭据没设置或不对当前智能体开放时 fetch 会报错，工具要接住错误并返回 { ok: false, message }。需要 requires.sdk 至少为 12，动态创造会自动声明。',
-    "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），绑定「仅用于网络请求」的凭据时它返回 undefined。凭据字段不能有默认值。harness.config() 和 ctx.config() 里凭据字段的值就是它的占位符，可以直接放进 http.fetch，例如 'Bearer ' + ctx.config().apiKey；字段没填时也是占位符，发请求时才报错。所有智能体共用的 API Key 放 config.host，只需填一次。",
+    "ctx.nxt.secrets.get(key) / nxt.secrets.get(key)：读取 config.host 或 config.agent 中 meta.role: 'secret' 的字段（两层字段名不能重复，按声明它的那一层取值）；用户未填写时返回 undefined。只有代码确实要拿到原文时才用它（例如签名算法），字段绑定的凭据「仅用于网络请求」或不对当前智能体开放时它会报错，报错写明凭据名称和改法，把这句话原样返回给智能体，不要当成没填。凭据字段不能有默认值。harness.config() 和 ctx.config() 里凭据字段的值就是它的占位符，可以直接放进 http.fetch，例如 'Bearer ' + ctx.config().apiKey；字段没填时也是占位符，发请求时才报错。所有智能体共用的 API Key 放 config.host，只需填一次。",
   ],
   host: [
     "factory 顶层的 nxt（本机层）：nxt.http.fetch、nxt.secrets.get、nxt.storage.get/set/delete/list（本机分区，与智能体挂载里 scope: 'shared' 是同一份数据）、nxt.render、nxt.parse、nxt.assets.list/get/release（扩展资源库）与 read/stat、nxt.image.info、nxt.files、nxt.media、nxt.commands、nxt.speech、nxt.index、nxt.models；需要 permissions.host：{ network?, storage?: { quotaBytes? }, assets?: { library?, read? }, files?, media?, commands?, speech?, index?, models? }。在 RPC 处理函数里使用；动态试运行中要等扩展挂载后才可用，不要在 factory 顶层直接调用。",

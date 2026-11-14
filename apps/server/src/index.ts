@@ -304,6 +304,7 @@ import {
   createNxtHostService,
   dshPromptRegistry,
   NXT_HOST_SERVICE_NAME,
+  NxtCapabilityError,
   type NxtServiceBackends,
 } from './extension-host-service.js'
 import type { NxtDataMigration, NxtLlmRequest, NxtLlmResponse } from '@nekro-nxt/extension-sdk'
@@ -3696,7 +3697,12 @@ export class DshHostRuntime implements AgentSessionDriver {
               const configs: McpPluginConfig[] = []
               for (const server of servers) {
                 const resolved = await mcpPluginConfig(server, {
-                  readSecret: (key) => extensionHost.activationBackends.secret(binding, key),
+                  // A bound credential the server may not read leaves the value missing; the log says why.
+                  readSecret: (key) =>
+                    extensionHost.activationBackends.secret(binding, key).catch((error: unknown) => {
+                      if (error instanceof NxtCapabilityError) return undefined
+                      throw error
+                    }),
                   readCredential: async (reference, use) =>
                     extensionHost.activationBackends.mcpCredential?.(binding, reference, use),
                   cwd,

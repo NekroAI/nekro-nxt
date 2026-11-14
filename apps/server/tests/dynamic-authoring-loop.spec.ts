@@ -1136,7 +1136,8 @@ return { inject: ['nxt'], apply() {} }`
     const { runtime, entity, dshSessionId } = await startAuthoringSession()
     // The probe reports what it saw by failing with it, so the trial run returns the observation. Both configuration
     // layers hold the same placeholders `secrets.placeholder` gives, not the stored references (#143). The mount's
-    // ctx.config() has the host layer's fields too, so reading one there is not left undefined (#145).
+    // ctx.config() has the host layer's fields too, so reading one there is not left undefined (#145). Reading the value
+    // fails with the reason instead of looking unset (R-345).
     const host = `const factoryShared = harness.config().sharedKey
 return {
   inject: ['tools', 'nxt'],
@@ -1148,11 +1149,11 @@ return {
       output: { schema: { type: 'string' }, render(_args, value) { return [{ type: 'text', text: value }] } },
       async execute() {
         const token = ctx.nxt.secrets.placeholder('apiKey')
-        const read = await ctx.nxt.secrets.get('apiKey')
+        const read = await ctx.nxt.secrets.get('apiKey').then((value) => value ?? null, (error) => error.message)
         const config = ctx.config().apiKey === token
         const shared = factoryShared === ctx.nxt.secrets.placeholder('sharedKey')
         const mounted = ctx.config().sharedKey === factoryShared
-        throw new Error('observed ' + JSON.stringify({ token, read: read ?? null, config, shared, mounted }))
+        throw new Error('observed ' + JSON.stringify({ token, read, config, shared, mounted }))
       }
     }))
   }
@@ -1208,7 +1209,7 @@ return {
           (error: unknown) => (error instanceof Error ? error.message : String(error)),
         )
       expect(failure).toMatch(
-        /observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":null,"config":true,"shared":true,"mounted":true\}/u,
+        /observed \{"token":"\{\{nxt-credential:[a-f0-9]{24}\}\}","read":"凭据「示例天气」只用于网络请求，扩展代码读不到它的值。[^"]*","config":true,"shared":true,"mounted":true\}/u,
       )
       expect(failure).not.toContain('fictional-weather-key')
     } finally {

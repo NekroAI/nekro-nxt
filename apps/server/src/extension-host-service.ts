@@ -1163,9 +1163,7 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
         if (backends.requestSecret === undefined) throw new NxtCapabilityError('这里不能使用凭据占位符。')
         const secret = await backends.requestSecret(binding, key, targetHost)
         if (secret === undefined) {
-          throw new NxtCapabilityError(
-            `凭据字段 ${key} 还没有设置，或者绑定的凭据不对当前智能体开放。${unsetSecretStep(binding, key)}`,
-          )
+          throw new NxtCapabilityError(`凭据字段 ${key} 还没有填写，请求没有发出去。${unsetSecretStep(binding, key)}`)
         }
         secrets.push({ token, ...secret })
       }
@@ -1174,7 +1172,10 @@ const credentialPlaceholders = (binding: NxtServiceBinding, backends: NxtService
   }
 }
 
-/** `secrets.get`; a key that is not a declared secret field is logged, since it can never resolve. */
+/**
+ * `secrets.get`; a key that is not a declared secret field is logged, since it can never resolve. An unset field is
+ * `undefined`; a bound credential code may not read throws with the reason.
+ */
 const readSecret = async (
   binding: NxtServiceBinding,
   backends: NxtServiceBackends,

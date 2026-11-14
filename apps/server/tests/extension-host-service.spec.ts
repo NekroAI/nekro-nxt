@@ -349,8 +349,8 @@ describe('nxt Host service', () => {
     const uses: NamedCredentialUse[] = []
     const namedCredential: NamedCredentialResolver = (use) => {
       uses.push(use)
-      if (use.id === 'crd_FOREIGN') return undefined
-      if (use.id === 'crd_REQUEST' && use.purpose === 'program') return undefined
+      if (use.id === 'crd_FOREIGN') return { denied: 'scope', name: '他人的密钥' }
+      if (use.id === 'crd_REQUEST' && use.purpose === 'program') return { denied: 'request-only', name: '示例天气密钥' }
       return {
         value: `value-of:${use.id}`,
         usage: use.id === 'crd_REQUEST' ? 'request' : 'program',
@@ -367,8 +367,17 @@ describe('nxt Host service', () => {
       { namedCredential },
     )
     expect(await nxt.secrets.get('named')).toBe('value-of:crd_PROGRAM')
-    expect(await nxt.secrets.get('requestOnly')).toBeUndefined()
-    expect(await nxt.secrets.get('foreign')).toBeUndefined()
+    // Set but not readable: code hears why instead of mistaking it for an empty field (R-345).
+    const requestOnly = nxt.secrets.get('requestOnly')
+    await expect(requestOnly).rejects.toThrow(NxtCapabilityError)
+    await expect(requestOnly).rejects.toThrow(
+      '凭据「示例天气密钥」只用于网络请求，扩展代码读不到它的值。请在扩展配置里给 requestOnly 换一个允许程序读取的凭据，或请扩展作者改用 secrets.placeholder 占位符。',
+    )
+    await expect(nxt.secrets.get('foreign')).rejects.toThrow(
+      '凭据「他人的密钥」不对这个智能体开放。请在「设置 → 凭据」里把它开放给这个智能体，或在扩展配置里给 foreign 换一个对它开放的凭据。',
+    )
+    // An empty field is still just unset.
+    expect(await nxt.secrets.get('missing')).toBeUndefined()
     expect(uses.map((use) => [use.id, use.agentId, use.purpose, use.extensionId])).toEqual([
       ['crd_PROGRAM', 'agt_FIXTURE', 'program', 'ext_FIXTURE'],
       ['crd_REQUEST', 'agt_FIXTURE', 'program', 'ext_FIXTURE'],
@@ -376,11 +385,51 @@ describe('nxt Host service', () => {
     ])
   })
 
+  it('says why a bound credential cannot be read on the host layer and in a trial run', async () => {
+    const facts = {
+      resolveCredential: () => Promise.reject(new Error('Unexpected store read.')),
+      namedCredential: ((use) =>
+        use.purpose === 'program' && use.id === 'crd_REQUEST'
+          ? { denied: 'request-only', name: '示例天气密钥' }
+          : use.agentId === undefined
+            ? { denied: 'scope', name: '示例天气密钥' }
+            : {
+                value: 'request-only-fixture-key',
+                usage: 'request',
+                domains: ['api.example.com'],
+              }) satisfies NamedCredentialResolver,
+    }
+    const binding = (mode: NxtServiceBinding['mode'], agentId: string): NxtServiceBinding => ({
+      mode,
+      agentId,
+      ownerKey: 'ext_FIXTURE',
+      displayName: '示例扩展',
+      channelId: '',
+      capabilities: () => undefined,
+      config: () => ({}),
+      hostConfig: () => ({ apiKey: 'credential:named:crd_REQUEST' }),
+      declaredSecrets: () => ({ config: [], hostConfig: ['apiKey'] }),
+    })
+    // The host layer serves every agent, so a credential open to only some of them stays out of reach.
+    await expect(
+      resolveExtensionSecret(facts, binding('host', ''), 'apiKey', 'request', 'api.example.com'),
+    ).rejects.toThrow(
+      '凭据「示例天气密钥」只对部分智能体开放，扩展的本机层读不到它。请在「设置 → 凭据」里把它的可用智能体改为全部智能体，或在扩展的本机配置里给 apiKey 换一个对全部智能体开放的凭据。',
+    )
+    // A trial run's author is pointed at testConfig and placeholders, not at someone else's extension settings.
+    await expect(resolveExtensionSecret(facts, binding('dynamic', 'agt_FIXTURE'), 'apiKey', 'program')).rejects.toThrow(
+      "凭据「示例天气密钥」只用于网络请求，扩展代码读不到它的值。用 secrets.placeholder('apiKey') 把它放进 http.fetch 的请求，或在 testConfig 里给 apiKey 换一个允许程序读取的凭据。",
+    )
+    await expect(
+      resolveExtensionSecret(facts, binding('dynamic', 'agt_FIXTURE'), 'apiKey', 'request', 'api.example.com'),
+    ).resolves.toEqual({ value: 'request-only-fixture-key', domains: ['api.example.com'] })
+  })
+
   it('fills credential placeholders in requests the host sends, never handing the value to code', async () => {
     const namedCredential: NamedCredentialResolver = (use) =>
       use.id === 'crd_REQUEST'
         ? { value: 'request-only-fixture-key', usage: 'request', domains: ['api.example.com'] }
-        : undefined
+        : { denied: 'scope', name: '他人的密钥' }
     const network = { network: { mode: 'domains' as const, domains: ['api.example.com'] } }
     const { nxt, fetch } = fixture(
       network,
@@ -398,7 +447,14 @@ describe('nxt Host service', () => {
     ])
 
     const foreign = nxt.secrets.placeholder('foreign')
-    await expect(nxt.http.fetch(`https://api.example.com/?k=${foreign}`)).rejects.toThrow('还没有设置')
+    await expect(nxt.http.fetch(`https://api.example.com/?k=${foreign}`)).rejects.toThrow(
+      '凭据「他人的密钥」不对这个智能体开放。',
+    )
+    const missing = nxt.secrets.placeholder('missing')
+    await expect(nxt.http.fetch(`https://api.example.com/?k=${missing}`)).rejects.toThrow(
+      '凭据字段 missing 还没有填写，请求没有发出去。',
+    )
+    expect(fetch).toHaveBeenCalledTimes(1)
     await expect(
       nxt.http.fetch('https://api.example.com/?k={{nxt-credential:0123456789abcdef01234567}}'),
     ).rejects.toThrow('不属于这个扩展')
