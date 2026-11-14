@@ -63,8 +63,8 @@ const TRIGGER_RANK = { suppress: 2, force: 1, default: 0 } as const
 /**
  * Inbound hooks of agent extensions, with NekroNXT's own annotators chained before them. Each handler sees only what
  * its declaration allows, runs under its own timeout, and may only exercise the effects it declared; failures fall
- * back to the default and are recorded, never thrown. A message that no handler saw and no annotator noted keeps no
- * decision.
+ * back to the default and are recorded, never thrown. Every covered message keeps its decision, even one that changed
+ * nothing, so it is decided once; only an annotator that failed outright leaves the message to be decided again.
  */
 export class ExtensionInboundHookGate implements InboundHookGate {
   readonly #options: ExtensionInboundHookGateOptions
@@ -105,10 +105,16 @@ export class ExtensionInboundHookGate implements InboundHookGate {
     readonly event: ChannelEventRecord
     readonly defaultTriggered: boolean
   }): Promise<InboundHookDecision> {
+    let annotatorFailed = false
     const hostNotes = Promise.all(
       (this.#options.hostAnnotators ?? [])
         .filter((annotator) => annotator.covers(input.binding.agentId))
-        .map((annotator) => annotator.annotate(input).catch((): readonly InboundAnnotation[] => [])),
+        .map((annotator) =>
+          annotator.annotate(input).catch((): readonly InboundAnnotation[] => {
+            annotatorFailed = true
+            return []
+          }),
+        ),
     ).then((notes) => notes.flat())
     const handlers = this.#options.handlers(input.binding.agentId)
     let message: NxtInboundMessage | undefined
@@ -156,7 +162,8 @@ export class ExtensionInboundHookGate implements InboundHookGate {
     }
     const annotation = annotations.join('\n')
     const hostAnnotations = await hostNotes
-    if (handlers.length === 0 && hostAnnotations.length === 0) return { trigger: 'default', hidden: false }
+    if (handlers.length === 0 && hostAnnotations.length === 0 && annotatorFailed)
+      return { trigger: 'default', hidden: false }
     return this.#options.store.save({
       eventId: input.event.id,
       agentId: input.binding.agentId,

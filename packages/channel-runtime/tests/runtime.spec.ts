@@ -54,6 +54,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type {
   AdmissionRecord,
   ChannelRuntimeOptions,
+  CommandGate,
   InboundHookDecision,
   InboundHookGate,
   AgentSessionDriver,
@@ -3816,5 +3817,283 @@ describe('ChannelRuntime response timing (Decision 2026-10-31)', () => {
     expect(h.admissionCalls).toHaveLength(2)
     expect(h.texts(h.admissionCalls[1]!)).toEqual(['@荧 一', '二', '三'])
     expect(h.admissionCalls[1]).toMatchObject({ replyRequired: true })
+  })
+})
+
+describe('ChannelRuntime startup backlog sweep (R-348)', () => {
+  type Harness = Awaited<ReturnType<typeof setup>>
+  /** A host restart over the same stores, counting how often the sweep looks at each message. */
+  const restart = (context: Harness, options: Partial<ChannelRuntimeOptions> = {}) => {
+    const looked = new Map<ChannelEventId, number>()
+    const commands: CommandGate = {
+      commitInbound: (event) => context.core.appendInbound(event),
+      excludes: (event) => {
+        looked.set(event.id, (looked.get(event.id) ?? 0) + 1)
+        return false
+      },
+      project: (event) => event,
+    }
+    const runtime = new ChannelRuntime(
+      context.core,
+      context.coreRepository,
+      context.runtimeRepository,
+      context.sessionDriver,
+      { deferAdmission: true, resolveAdapter: () => context.adapter, commands, ...options },
+    )
+    return { runtime, looked }
+  }
+  const recordingHooks = (
+    decide: (text: string) => InboundHookDecision = () => ({ trigger: 'default', hidden: false }),
+  ) => {
+    const stored = new Map<string, InboundHookDecision>()
+    const decided: ChannelEventId[] = []
+    const gate: InboundHookGate = {
+      covers: () => true,
+      decide: ({ event, binding }) => {
+        decided.push(event.id)
+        const part = event.parts[0]
+        const decision = decide(part?.type === 'text' ? part.text : '')
+        stored.set(`${event.id}:${binding.agentId}`, decision)
+        return Promise.resolve(decision)
+      },
+      stored: (eventId, agentId) => stored.get(`${eventId}:${agentId}`),
+    }
+    return { gate, decided }
+  }
+  const say = (
+    context: Harness,
+    eventId: string,
+    receivedAt: number,
+    extra: Partial<AdapterChannelInboundEvent> = {},
+  ): AdapterChannelInboundEvent => ({
+    ...inbound(context.connection.id, context.channel.id, eventId, receivedAt),
+    parts: [{ type: 'text', text: eventId }],
+    ...extra,
+  })
+  const texts = (events: readonly ChannelEventRecord[]) =>
+    events.map(({ parts }) => (parts[0]?.type === 'text' ? parts[0].text : ''))
+  /** A lane with a live Episode and plain chat after it, as a "mentioned or replied" group looks after a restart. */
+  const laneWithBacklog = async (plain: number) => {
+    const context = await setup()
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    await context.runtime.acceptChannelInbound(say(context, 'wake', 102, { facts: { mentionedBot: true } }))
+    expect(context.admissionCalls).toHaveLength(1)
+    const backlog: ChannelEventId[] = []
+    for (let index = 0; index < plain; index += 1) {
+      const commit = await context.runtime.acceptChannelInbound(say(context, `chat-${index}`, 110 + index))
+      backlog.push(commit.channelEventId)
+    }
+    expect(context.admissionCalls).toHaveLength(1)
+    await context.runtime.dispose()
+    return { context, backlog }
+  }
+
+  it('looks at each backlog message once per opening, though recovery already swept the lane', async () => {
+    const { context, backlog } = await laneWithBacklog(3)
+    const { runtime, looked } = restart(context)
+    await runtime.openAdmission()
+    // Recovery resumed the Episode and swept its lane; the closing sweep did not read the same messages again.
+    expect(context.sessionCalls.filter((call) => call.startsWith('create:'))).toHaveLength(2)
+    expect(backlog.map((id) => looked.get(id))).toEqual([1, 1, 1])
+    expect(context.admissionCalls).toHaveLength(1)
+    await runtime.dispose()
+  })
+
+  it('decides a backlog message once and admits one that arrived after recovery swept the lane', async () => {
+    const { context, backlog } = await laneWithBacklog(3)
+    const hooks = recordingHooks()
+    let late: ChannelEventId | undefined
+    const { runtime } = restart(context, {
+      inboundHooks: {
+        ...hooks.gate,
+        decide: async (input) => {
+          const decision = await hooks.gate.decide(input)
+          // The last backlog message: recovery has already listed the lane, so this one is new to it.
+          if (input.event.id === backlog.at(-1) && late === undefined) {
+            const commit = await runtime.acceptChannelInbound(
+              say(context, 'late', 200, { facts: { mentionedBot: true } }),
+            )
+            late = commit.channelEventId
+          }
+          return decision
+        },
+      },
+    })
+    const published: string[] = []
+    runtime.subscribeFacts((fact) => {
+      if (fact.kind === 'inbound') published.push(fact.sourceId)
+    })
+    await runtime.openAdmission()
+    expect(late).toBeDefined()
+    expect(hooks.decided).toEqual([...backlog, late])
+    // Published once on commit, then once with each decision.
+    expect([...published].sort()).toEqual([...backlog, late, late].sort())
+    expect(context.admissionCalls).toHaveLength(2)
+    expect(context.admissionCalls[1]?.events.map(({ id }) => id)).toEqual([...backlog, late])
+    expect(context.admissionCalls[1]?.replyRequired).toBe(true)
+    await runtime.dispose()
+
+    // Decisions are kept, so the next start neither decides nor publishes again.
+    const again = restart(context, { inboundHooks: hooks.gate })
+    const republished: string[] = []
+    again.runtime.subscribeFacts((fact) => republished.push(fact.sourceId))
+    await again.runtime.openAdmission()
+    expect(hooks.decided).toHaveLength(4)
+    expect(republished).toEqual([])
+    await again.runtime.dispose()
+  })
+
+  it('skips command recognition for agents whose hooks do not cover the message', async () => {
+    const { context, backlog } = await laneWithBacklog(2)
+    const decide = vi.fn<InboundHookGate['decide']>()
+    const { runtime, looked } = restart(context, {
+      inboundHooks: { covers: () => false, decide, stored: () => undefined },
+    })
+    await runtime.openAdmission()
+    expect(decide).not.toHaveBeenCalled()
+    // Only the trigger rule looked at them, once.
+    expect(backlog.map((id) => looked.get(id))).toEqual([1, 1])
+    await runtime.dispose()
+  })
+
+  it('checks the sender only for a would-be trigger, while a forced hook decision still wakes the agent', async () => {
+    const context = await setup()
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    const alice = context.core.observeChannelMember({
+      connectionId: context.connection.id,
+      channelId: context.channel.id,
+      platformUserId: '30001',
+      observedAt: 100,
+    }).member
+    const hooks = recordingHooks((text) => ({ trigger: text === 'force' ? 'force' : 'default', hidden: false }))
+    const members = vi.spyOn(context.core, 'describeChannelMember')
+    const first = restart(context, { inboundHooks: hooks.gate })
+    for (const [index, eventId] of ['chat-a', 'chat-b'].entries())
+      await first.runtime.acceptChannelInbound(say(context, eventId, 110 + index, { senderMemberId: alice.id }))
+    await first.runtime.openAdmission()
+    expect(members).not.toHaveBeenCalled()
+    expect(context.admissionCalls).toHaveLength(0)
+    await first.runtime.dispose()
+
+    const second = restart(context, { inboundHooks: hooks.gate })
+    await second.runtime.acceptChannelInbound(say(context, 'force', 120, { senderMemberId: alice.id }))
+    await second.runtime.openAdmission()
+    expect(context.admissionCalls).toHaveLength(1)
+    expect(texts(context.admissionCalls[0]!.events)).toEqual(['chat-a', 'chat-b', 'force'])
+    expect(context.admissionCalls[0]?.replyRequired).toBe(true)
+    await second.runtime.dispose()
+  })
+
+  it('keeps every trigger rule when the backlog is swept at startup', async () => {
+    const outcome = async (
+      prepare: (context: Harness) => void,
+      event: (context: Harness) => AdapterChannelInboundEvent,
+    ) => {
+      const context = await setup()
+      prepare(context)
+      const { runtime } = restart(context)
+      await runtime.acceptChannelInbound(event(context))
+      await runtime.openAdmission()
+      await runtime.dispose()
+      return context.admissionCalls.map(({ replyRequired }) => replyRequired)
+    }
+    const policy =
+      (triggerPolicy: BindingRecord['triggerPolicy'], localAgentMessages?: 'observe' | 'trigger') =>
+      (context: Harness) => {
+        context.core.replaceBinding({
+          channelId: context.channel.id,
+          agentId: context.agent.definition.id,
+          triggerPolicy,
+          ...(localAgentMessages === undefined ? {} : { localAgentMessages }),
+        })
+      }
+    const plain = (context: Harness) => say(context, 'plain', 110)
+    expect(await outcome(policy('always'), plain)).toEqual([true])
+    expect(await outcome(policy('observe-only'), plain)).toEqual([])
+    expect(await outcome(policy('mentioned-or-replied'), plain)).toEqual([])
+    expect(
+      await outcome(policy('mentioned-or-replied'), (context) =>
+        say(context, 'reply', 110, { facts: { replyToBot: true } }),
+      ),
+    ).toEqual([true])
+    expect(await outcome(policy('command'), plain)).toEqual([])
+    expect(
+      await outcome(policy('command'), (context) => say(context, 'command', 110, { facts: { command: '/status' } })),
+    ).toEqual([true])
+    // A paused channel wakes for nothing.
+    expect(
+      await outcome((context) => {
+        const binding = context.coreRepository.getBinding(context.channel.id)!
+        context.coreRepository.replaceBinding({ ...binding, paused: true })
+      }, plain),
+    ).toEqual([])
+    // Another agent's account on this host stays context, even under "always", unless the binding opts in.
+    const fromLocalAgent = (context: Harness) => {
+      const other = context.core.createConnection({ adapterKey: 'fake', config: {} })
+      context.core.reportConnectionAccount({ connectionId: other.id, platformUserId: '20002', observedAt: 100 })
+      const recorder = context.core.observeChannelMember({
+        connectionId: context.connection.id,
+        channelId: context.channel.id,
+        platformUserId: '20002',
+        observedAt: 100,
+      }).member
+      return say(context, 'local-agent', 110, { senderMemberId: recorder.id })
+    }
+    expect(await outcome(policy('always'), fromLocalAgent)).toEqual([])
+    expect(await outcome(policy('always', 'trigger'), fromLocalAgent)).toEqual([true])
+  })
+
+  it('wakes the agent for a due job found in the backlog without obliging a reply', async () => {
+    const context = await setup()
+    context.core.replaceBinding({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      triggerPolicy: 'mentioned-or-replied',
+    })
+    const { runtime } = restart(context)
+    await runtime.fireExtensionJob({
+      channelId: context.channel.id,
+      agentId: context.agent.definition.id,
+      jobId: 'job_FIXTURE',
+      label: '示例提醒',
+      payload: null,
+      scheduledAt: 110,
+      firedAt: 110,
+    })
+    expect(context.admissionCalls).toHaveLength(0)
+    await runtime.openAdmission()
+    expect(context.admissionCalls.map(({ replyRequired }) => replyRequired)).toEqual([false])
+    await runtime.dispose()
+  })
+
+  it('lets timers run during a long backlog and keeps the lane in order', async () => {
+    const { context, backlog } = await laneWithBacklog(1_200)
+    const { runtime } = restart(context)
+    let late: Promise<unknown> | undefined
+    let lateBeforeOpened = false
+    const opening = runtime.openAdmission().then(() => {
+      lateBeforeOpened = late !== undefined
+    })
+    // Queued before the sweep starts: without yielding it could only run once the whole sweep is done.
+    setImmediate(() => {
+      late = runtime.acceptChannelInbound(say(context, 'late', 5_000, { facts: { mentionedBot: true } }))
+    })
+    await opening
+    await late
+    expect(lateBeforeOpened).toBe(true)
+    // The new message waited for the lane, then took the whole backlog with it, in order and once.
+    expect(context.admissionCalls).toHaveLength(2)
+    const admitted = context.admissionCalls[1]!.events.map(({ id }) => id)
+    expect(admitted).toEqual([...backlog, admitted.at(-1)])
+    expect(texts(context.admissionCalls[1]!.events).at(-1)).toBe('late')
+    await runtime.dispose()
   })
 })

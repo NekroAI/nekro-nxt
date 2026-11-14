@@ -24,6 +24,8 @@ import {
   channelEvents,
   channelBindings,
   bindingAdmissionCutoffs,
+  commandExecutions,
+  commandIgnoredEvents,
   dshSessionResets,
   dynamicAuthoringTasks,
   dynamicAuthoringAttempts,
@@ -552,6 +554,15 @@ export function createRuntimeRepository(
       const pageSize = 200
       const result: ChannelEventRecord[] = []
       let cursor: { readonly receivedAt: number; readonly id: ChannelEventId } | undefined
+      // A command is classified when its message is committed and never reaches the agent, so it is never pending.
+      const command = database
+        .select({ present: sql`1` })
+        .from(commandExecutions)
+        .where(eq(commandExecutions.eventId, channelEvents.id))
+      const ignoredCommand = database
+        .select({ present: sql`1` })
+        .from(commandIgnoredEvents)
+        .where(eq(commandIgnoredEvents.eventId, channelEvents.id))
       for (;;) {
         const alreadyAdmitted = database
           .select({ present: sql`1` })
@@ -574,6 +585,8 @@ export function createRuntimeRepository(
               inArray(channelEvents.kind, ['message-created', 'message-edited', 'control']),
               gte(channelEvents.receivedAt, boundAt),
               notExists(alreadyAdmitted),
+              notExists(command),
+              notExists(ignoredCommand),
               cutoff === undefined
                 ? undefined
                 : or(

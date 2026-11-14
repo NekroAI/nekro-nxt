@@ -14,7 +14,7 @@ const fixture = async () => {
   const core = new CoreService(repository)
   const connection = core.createConnection({ adapterKey: 'fixture', config: {} })
   const channel = core.createChannel({ connectionId: connection.id, platformChannelId: 'room', kind: 'group' })
-  return { repository, channel }
+  return { repository, core, connection, channel }
 }
 
 describe('command execution storage', () => {
@@ -76,5 +76,45 @@ describe('command execution storage', () => {
     expect(recovered.status).toBe('uncertain')
     expect(recovered.replies.map((reply) => reply.kind)).toEqual(['final'])
     expect(repository.commands.claim(record.id)).toBe(false)
+  })
+
+  it('never lists command messages as pending for the agent, executed or deliberately ignored', async () => {
+    const { repository, core, connection, channel } = await fixture()
+    const agent = core.createAgent({ displayName: '示例', persona: '', model: { provider: 'deepseek', model: 'v4' } })
+    core.createBinding({ channelId: channel.id, agentId: agent.definition.id, triggerPolicy: 'always' })
+    const message = (key: string, text: string, receivedAt: number) =>
+      core.appendInbound({
+        connectionId: connection.id,
+        channelId: channel.id,
+        adapterKey: 'fixture',
+        kind: 'message-created',
+        parts: [{ type: 'text', text }],
+        platformTimestamp: receivedAt,
+        receivedAt,
+        dedupeKey: key,
+      }).event
+    const chat = message('chat', '你好', 10)
+    const executed = message('executed', '/status', 11)
+    const ignored = message('ignored', '/status', 12)
+    const later = message('later', '在吗', 13)
+    repository.commands.insert({
+      id: 'cmd_executed',
+      channelId: channel.id,
+      source: 'platform',
+      requestId: executed.id,
+      eventId: executed.id,
+      rawText: '/status',
+      identity: { source: 'platform', connectionId: connection.id, displayName: '平台用户' },
+      status: 'succeeded',
+      replies: [],
+      createdAt: 11,
+    })
+    repository.commands.ignore(ignored.id, 'rate-limited')
+    expect(repository.commands.isCommandEvent(executed.id)).toBe(true)
+    expect(repository.commands.isCommandEvent(ignored.id)).toBe(true)
+    expect(repository.listUnadmittedEvents(channel.id, agent.definition.id, 0).map(({ id }) => id)).toEqual([
+      chat.id,
+      later.id,
+    ])
   })
 })

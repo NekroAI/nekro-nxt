@@ -40,6 +40,7 @@ import type {
   CoreService,
 } from '@nekro-nxt/core'
 import { canonicalJson } from '@nekro-nxt/core'
+import { setImmediate as yieldToEventLoop } from 'node:timers/promises'
 import { monotonicFactory } from 'ulid'
 import { ChannelDelivery } from './channel-delivery.js'
 export { supportsPart as adapterSupportsPart, UNSUPPORTED_PART } from './channel-delivery.js'
@@ -266,6 +267,7 @@ export interface RuntimeRepository {
   listRecoverableAdmissions(episodeId: EpisodeId): readonly AdmissionRecord[]
   /** Admitted inbound facts for one Episode, oldest-first within the recent limit. */
   listAdmittedEvents(episodeId: EpisodeId, limit: number): readonly ChannelEventRecord[]
+  /** Messages and controls since binding not yet handed to this agent; command messages never count as pending. */
   listUnadmittedEvents(channelId: ChannelId, agentId: AgentId, boundAt: number): readonly ChannelEventRecord[]
   /** Whether the event was already handed to this agent in some Admission of the channel, in any state. */
   isEventAdmitted(channelId: ChannelId, agentId: AgentId, eventId: ChannelEventId): boolean
@@ -588,6 +590,18 @@ export const isSessionCompatibleRevision = (previous: AgentRevisionRecord, targe
   canonicalJson({ ...previous.capabilities }) === canonicalJson({ ...target.capabilities })
 
 const laneKey = (channelId: ChannelId, agentId: AgentId): string => `${channelId}\u0000${agentId}`
+
+/** A backlog sweep lets timers and platform I/O run after this many messages, so a long backlog cannot stall them. */
+const BACKLOG_YIELD_EVERY = 500
+
+/**
+ * What one opening of admission already learned about a lane's backlog: the messages a sweep found settled (decided
+ * and not triggering) under that binding and hook coverage. A later sweep in the same opening only looks at the rest.
+ */
+type BacklogSweeps = Map<
+  string,
+  { readonly binding: string; readonly covered: boolean; readonly settled: ReadonlySet<ChannelEventId> }
+>
 
 /** Channels that only answer commands or only observe never wake the agent on their own, so it cannot wait there. */
 const waitSupported = (binding: BindingRecord): boolean =>
@@ -1026,12 +1040,17 @@ export class ChannelRuntime {
     })
   }
 
-  async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord): Promise<void> {
+  /**
+   * Runs the agent's inbound hooks once for a committed message. `covered` is the caller's `covers` answer for a whole
+   * sweep. Resolves false only when the hooks ran and kept no decision, so the message is still undecided.
+   */
+  async #decideInboundHooks(binding: BindingRecord, event: ChannelEventRecord, covered?: boolean): Promise<boolean> {
     const hooks = this.#inboundHooks
-    if (this.#commands?.excludes(event)) return
+    // Cheapest checks first: most backlog is plain chat of agents without hooks.
+    if (hooks === undefined || event.kind !== 'message-created' || isExtensionJobEvent(event)) return true
+    if (!(covered ?? hooks.covers(binding.agentId))) return true
+    if (hooks.stored(event.id, binding.agentId) !== undefined || this.#commands?.excludes(event)) return true
     event = this.#commands?.project(event) ?? event
-    if (hooks === undefined || event.kind !== 'message-created' || isExtensionJobEvent(event)) return
-    if (!hooks.covers(binding.agentId) || hooks.stored(event.id, binding.agentId) !== undefined) return
     await hooks.decide({
       binding,
       event,
@@ -1044,6 +1063,7 @@ export class ChannelRuntime {
     })
     // The message was published on commit, before the decision; publish it again so clients show the outcome.
     this.#publishFact({ channelId: event.channelId, kind: 'inbound', sourceId: event.id })
+    return hooks.stored(event.id, binding.agentId) !== undefined
   }
 
   #hookDecision(binding: BindingRecord, event: ChannelEventRecord): InboundHookDecision | undefined {
@@ -1059,10 +1079,11 @@ export class ChannelRuntime {
     const decision = this.#hookDecision(binding, event)
     if (decision?.hidden === true || decision?.trigger === 'suppress') return false
     if (decision?.trigger === 'force') return binding.triggerPolicy !== 'observe-only'
-    if (this.#isObservedLocalAgentMessage(binding, event)) return false
+    // The policy rule is pure; the member lookup behind the local-agent check only runs for a would-be trigger.
     if (!isTriggered(binding, event, this.#isActivityTriggerAllowed, this.#isActivityTriggerEnabledByDefault)) {
       return false
     }
+    if (this.#isObservedLocalAgentMessage(binding, event)) return false
     return event.activityKey === undefined || this.#activityWakesAgent(event)
   }
 
@@ -1149,7 +1170,8 @@ export class ChannelRuntime {
     const opening = (async () => {
       try {
         // Persisted Admissions must be reconciled before new inbound can enter their lane.
-        await this.#recover(!wasClosed)
+        const sweeps: BacklogSweeps = new Map()
+        await this.#recover(!wasClosed, sweeps)
         if (this.#admissionState === 'disposed') return
         this.#admissionState = 'open'
         const lanes = this.#coreRepository.listConnectionIdsByAdapter().flatMap((connectionId) =>
@@ -1158,7 +1180,7 @@ export class ChannelRuntime {
             if (!binding || !this.#canAdmitAgent(binding.agentId)) return []
             return [
               this.#withLane(channelId, binding.agentId, () =>
-                this.#recoverTriggeredBacklog(channelId, binding.agentId),
+                this.#recoverTriggeredBacklog(channelId, binding.agentId, sweeps),
               ),
             ]
           }),
@@ -1552,7 +1574,7 @@ export class ChannelRuntime {
     return this.#recover()
   }
 
-  async #recover(onlyDeferred = false): Promise<RuntimeRecoveryReport> {
+  async #recover(onlyDeferred = false, sweeps?: BacklogSweeps): Promise<RuntimeRecoveryReport> {
     const report = {
       resumedEpisodes: 0,
       recoveredAdmissions: 0,
@@ -1673,7 +1695,7 @@ export class ChannelRuntime {
           this.#runtimeRepository.completeAdmission(admission.id, result.dshMessageId, lastEventId)
           report.recoveredAdmissions += 1
         }
-        await this.#recoverTriggeredBacklog(episode.channelId, episode.agentId)
+        await this.#recoverTriggeredBacklog(episode.channelId, episode.agentId, sweeps)
         this.#deferredRecoveryEpisodes.delete(episode.id)
       })
     }
@@ -2133,18 +2155,62 @@ export class ChannelRuntime {
     return handedOver ? candidates : [...candidates, current]
   }
 
-  async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId): Promise<void> {
+  /**
+   * Decides and admits a lane's durable backlog. Within one opening of admission (`sweeps`), messages an earlier sweep
+   * found settled under the same binding and hook coverage are not looked at again; only what arrived since is.
+   */
+  async #recoverTriggeredBacklog(channelId: ChannelId, agentId: AgentId, sweeps?: BacklogSweeps): Promise<void> {
     if (!this.#admissionAllowed(agentId)) return
     const episode = this.#runtimeRepository.getActiveEpisode(channelId, agentId)
     if (episode && this.#deferredRecoveryEpisodes.has(episode.id)) return
     const binding = this.#coreRepository.getBinding(channelId)
     if (!binding || binding.agentId !== agentId) return
     const events = this.#runtimeRepository.listUnadmittedEvents(channelId, agentId, binding.boundAt)
+    const lane = laneKey(channelId, agentId)
+    // Everything of the binding that the trigger rule reads.
+    const bindingKey = canonicalJson([
+      binding.boundAt,
+      binding.triggerPolicy,
+      binding.paused,
+      binding.localAgentMessages,
+      { ...binding.activityTriggerOverrides },
+    ])
+    // One `covers` answer for the whole sweep; it reads the agent and its extensions.
+    const covered = this.#inboundHooks?.covers(agentId) ?? false
+    const previous = sweeps?.get(lane)
+    const known =
+      previous !== undefined && previous.binding === bindingKey && previous.covered === covered
+        ? previous.settled
+        : undefined
+    const fresh = known === undefined ? events : events.filter(({ id }) => !known.has(id))
+    const settled = new Set<ChannelEventId>()
+    let step = 0
     // A crash between commit and hook decision leaves undecided facts; decide them before recomputing triggers.
-    for (const candidate of events) await this.#decideInboundHooks(binding, candidate)
-    const event = events.find((candidate) => this.#triggered(binding, candidate))
-    // One Admission batches the whole eligible backlog. Replaying the stale list would duplicate it.
-    if (event !== undefined) await this.#admit(binding, event, events)
+    for (const candidate of fresh) {
+      if (++step % BACKLOG_YIELD_EVERY === 0) await yieldToEventLoop()
+      // Activities depend on live adapter state and a wake budget, so every sweep looks at them again.
+      if ((await this.#decideInboundHooks(binding, candidate, covered)) && candidate.activityKey === undefined)
+        settled.add(candidate.id)
+    }
+    // Messages settled earlier did not trigger under this binding, so the first trigger can only be a fresh one.
+    let event: ChannelEventRecord | undefined
+    for (const candidate of fresh) {
+      if (++step % BACKLOG_YIELD_EVERY === 0) await yieldToEventLoop()
+      if (this.#triggered(binding, candidate)) {
+        event = candidate
+        break
+      }
+    }
+    if (event !== undefined) {
+      sweeps?.delete(lane)
+      // One Admission batches the whole eligible backlog. Replaying the stale list would duplicate it.
+      await this.#admit(binding, event, events)
+      return
+    }
+    if (sweeps !== undefined) {
+      for (const id of known ?? []) settled.add(id)
+      sweeps.set(lane, { binding: bindingKey, covered, settled })
+    }
   }
 
   /**

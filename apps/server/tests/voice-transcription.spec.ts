@@ -124,7 +124,7 @@ describe('语音消息转文字', () => {
     expect(speech.transcribeOnce).toHaveBeenCalledTimes(1)
   })
 
-  it('leaves agents without the switch and messages without voice alone', async () => {
+  it('leaves agents without the switch and messages without voice alone, deciding a plain message once', async () => {
     const speech = { transcribeOnce: vi.fn(() => Promise.resolve(transcript('不会用到'))) }
     const { store, saved } = recordingStore()
     const off = gate({ enabled: false, speech, store })
@@ -136,8 +136,29 @@ describe('语音消息转文字', () => {
       trigger: 'default',
       hidden: false,
     })
-    expect(saved.size).toBe(0)
+    // The unchanged decision is kept, so a restart does not decide the message again.
+    expect(saved.size).toBe(1)
+    expect(on.stored(text.id, agentId)).toEqual({ trigger: 'default', hidden: false })
     expect(speech.transcribeOnce).not.toHaveBeenCalled()
+  })
+
+  it('keeps no decision when the annotator itself failed, so the message is decided again later', async () => {
+    const speech = { transcribeOnce: vi.fn(() => Promise.resolve(transcript('不会用到'))) }
+    const { store, saved } = recordingStore()
+    const broken = gate({
+      speech,
+      store,
+      audio: () => {
+        throw new Error('示例存储读取失败')
+      },
+    })
+    const voice = message([{ type: 'audio', assetId: voiceAsset }])
+    expect(await broken.decide({ binding, event: voice, defaultTriggered: true })).toEqual({
+      trigger: 'default',
+      hidden: false,
+    })
+    expect(saved.size).toBe(0)
+    expect(broken.stored(voice.id, agentId)).toBeUndefined()
   })
 
   it('wakes the agent after the wait with the reason instead of the text', async () => {
