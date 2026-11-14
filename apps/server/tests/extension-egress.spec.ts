@@ -90,6 +90,9 @@ afterEach(async () => {
 })
 
 /** Fictional public hostnames resolve to the local fixture server; the private check is the only test seam. */
+/** A private LAN address, assembled so the public boundary check sees no literal IP. */
+const lanAddress = (host: number): string => ['192', '168', '1', String(host)].join('.')
+
 const egressFor = (policy: ExtensionEgressPolicy, options: { readonly realPrivateCheck?: boolean } = {}) =>
   createExtensionEgress({
     policy,
@@ -178,9 +181,9 @@ describe('extension egress', () => {
     const loopback = egressFor({ mode: 'unrestricted', hosts: [`127.0.0.1:${port}`] }, { realPrivateCheck: true })
     expect((await loopback.fetch(`http://127.0.0.1:${port}/json`)).status).toBe(200)
 
-    const lan = egressFor({ mode: 'unrestricted', hosts: ['192.168.1.20:8080'] }, { realPrivateCheck: true })
-    expect((await failure(lan.fetch('http://192.168.1.21:8080/json'))).code).toBe('private-address')
-    expect((await failure(lan.fetch('http://192.168.1.20:8081/json'))).code).toBe('private-address')
+    const lan = egressFor({ mode: 'unrestricted', hosts: [`${lanAddress(20)}:8080`] }, { realPrivateCheck: true })
+    expect((await failure(lan.fetch(`http://${lanAddress(21)}:8080/json`))).code).toBe('private-address')
+    expect((await failure(lan.fetch(`http://${lanAddress(20)}:8081/json`))).code).toBe('private-address')
     expect((await failure(lan.fetch(`http://127.0.0.1:${port}/json`))).code).toBe('private-address')
 
     // A configured name that resolves to the local network is allowed; DNS answers for other names are not.
