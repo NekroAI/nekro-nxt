@@ -337,8 +337,14 @@ class DynamicDelegationModel extends LlmAdapter {
   }
 }
 
+const FOLLOWUP_TEXT = '在频道动作能力变化后继续。'
+const REPLACEMENT_TASK = '建立新的子智能体并返回一句完成说明。'
+
 class DenylistRecoveryModel extends LlmAdapter {
   readonly firstChildFinished = deferred()
+  // The resumed child and the replacement run beside the channel conversation, in either order: each is told apart by
+  // what it was asked, not by which request came last.
+  readonly resumedChildFinished = deferred()
   readonly replacementChildFinished = deferred()
   followupChildId: string | undefined
   childRequests = 0
@@ -372,8 +378,10 @@ class DenylistRecoveryModel extends LlmAdapter {
       this.childRequests += 1
       this.childToolNames.push([...toolNames])
       yield* textChunks(`子任务 ${this.childRequests} 完成。`)
-      if (this.childRequests === 1) this.firstChildFinished.resolve()
-      else if (this.replacementStarted) this.replacementChildFinished.resolve()
+      const asked = JSON.stringify(options.messages)
+      if (asked.includes(REPLACEMENT_TASK)) this.replacementChildFinished.resolve()
+      else if (asked.includes(FOLLOWUP_TEXT)) this.resumedChildFinished.resolve()
+      else this.firstChildFinished.resolve()
       return
     }
     if (!this.initialStarted) {
@@ -388,7 +396,7 @@ class DenylistRecoveryModel extends LlmAdapter {
       this.followupSent = true
       yield* toolCallChunks('conversation_send', 'denylist-followup', {
         conversation: this.followupChildId.replace(/^nxt-/u, ''),
-        text: '在频道动作能力变化后继续。',
+        text: FOLLOWUP_TEXT,
       })
       return
     }
@@ -396,7 +404,7 @@ class DenylistRecoveryModel extends LlmAdapter {
       this.replacementStarted = true
       yield* toolCallChunks('conversation_open', 'denylist-replacement', {
         title: '替换不可恢复子级',
-        task: '建立新的子智能体并返回一句完成说明。',
+        task: REPLACEMENT_TASK,
       })
       return
     }
@@ -981,7 +989,7 @@ describe('DSH official capability composition', () => {
         mode: 'followup',
         replyRequired: true,
       })
-      await model.replacementChildFinished.promise
+      await Promise.all([model.resumedChildFinished.promise, model.replacementChildFinished.promise])
       await host.whenIdle(sessionId)
 
       // The resumed child and the replacement both ran; neither may act in the channel.
