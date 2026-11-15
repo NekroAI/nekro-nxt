@@ -203,7 +203,11 @@ export function AgentProfile({ agent }: { readonly agent: AgentSummary }) {
           ...(draft.effort && chosen.reasoning?.efforts.some((effort) => effort.id === draft.effort)
             ? { reasoningEffort: draft.effort }
             : {}),
-          imagePolicy: withImageRestore(imagePolicyFor(agent.imagePolicy, chosen, vision), draft.imageRestore),
+          imagePolicy: withImageRestore(
+            imagePolicyFor(agent.imagePolicy, chosen, vision),
+            draft.imageRestore,
+            draft.maxRequestImages,
+          ),
           dynamicClientApprovalPolicy: agent.dynamicClientApprovalPolicy,
           compaction: draft.compaction,
           subConversationModels: savedSubConversationModels(draft.subConversationModels),

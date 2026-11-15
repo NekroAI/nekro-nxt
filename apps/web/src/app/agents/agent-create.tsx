@@ -103,6 +103,7 @@ export function AgentCreate() {
         imagePolicy: withImageRestore(
           imagePolicyFor(defaultImageUnderstandingPolicy(), model, vision),
           draft.imageRestore,
+          draft.maxRequestImages,
         ),
         compaction: draft.compaction,
         subConversationModels: savedSubConversationModels(draft.subConversationModels),

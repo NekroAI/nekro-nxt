@@ -550,6 +550,42 @@ describe('CoreService', () => {
     expect(renamed.revision.compaction).toEqual(compaction)
   })
 
+  it('keeps the request image limit through revisions, and no limit leaves earlier digests unchanged', () => {
+    const repository = new MemoryRepository()
+    let id = 0
+    const core = new CoreService(repository, { now: () => 100, nextUlid: () => `ID${++id}` })
+    const base = { displayName: '小奈', persona: '', model: { provider: 'deepseek', model: 'v4' } }
+    const first = core.createAgent(base)
+    expect(first.revision.imagePolicy.history.maxRequestImages).toBeUndefined()
+    // A policy saved before the setting existed is the same revision as one saved without a limit.
+    expect(
+      core.reviseAgent(first.definition.id, first.revision.id, {
+        ...base,
+        imagePolicy: DEFAULT_IMAGE_UNDERSTANDING_POLICY,
+      }).revision.id,
+    ).toBe(first.revision.id)
+    const limitedPolicy = {
+      ...DEFAULT_IMAGE_UNDERSTANDING_POLICY,
+      history: { ...DEFAULT_IMAGE_UNDERSTANDING_POLICY.history, maxRequestImages: 12 },
+    }
+    const limited = core.reviseAgent(first.definition.id, first.revision.id, { ...base, imagePolicy: limitedPolicy })
+    expect(limited.revision.id).not.toBe(first.revision.id)
+    expect(limited.revision.imagePolicy.history.maxRequestImages).toBe(12)
+    expect(diffAgentRevisions(first.revision, limited.revision)).toEqual(['imagePolicy'])
+    const renamed = core.reviseAgent(first.definition.id, limited.revision.id, {
+      ...base,
+      displayName: '小奈二号',
+      imagePolicy: limited.revision.imagePolicy,
+    })
+    expect(renamed.revision.imagePolicy.history.maxRequestImages).toBe(12)
+    expect(() =>
+      parseImageUnderstandingPolicy({
+        ...DEFAULT_IMAGE_UNDERSTANDING_POLICY,
+        history: { ...DEFAULT_IMAGE_UNDERSTANDING_POLICY.history, maxRequestImages: 2 },
+      }),
+    ).toThrow()
+  })
+
   it('stores a compaction threshold rounded, the default as no change, and keeps it when a revision leaves it out', () => {
     const repository = new MemoryRepository()
     let id = 0

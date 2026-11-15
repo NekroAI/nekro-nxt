@@ -57,3 +57,54 @@ export function ImageRestoreRow({
     </PropertyRow>
   )
 }
+
+const REQUEST_IMAGE_LIMITS = [6, 8, 12, 16, 24, 32]
+/** What the hint suggests for routes that send every image again with each reply. */
+export const SUGGESTED_REQUEST_IMAGES = 12
+
+/** How the saved main model sends images already in the conversation, as the host reports it. */
+export type RequestImageTransport = 'uploaded' | 'resent' | 'unknown'
+
+/**
+ * The most images one reply sends to the model. Routes that cannot reuse uploaded files send every image again with
+ * each reply, so a long run of pictures makes every reply slower; past the limit the oldest ones become placeholders
+ * the agent can still open.
+ */
+export function RequestImageLimitRow({
+  value,
+  transport,
+  update,
+}: {
+  readonly value: number | undefined
+  /** Undefined when the host does not say, or the draft's main model is not the saved one. */
+  readonly transport: RequestImageTransport | undefined
+  readonly update: DraftUpdate
+}) {
+  const hinted =
+    (transport === 'resent' || transport === 'unknown') && (value === undefined || value > SUGGESTED_REQUEST_IMAGES)
+  return (
+    <PropertyRow
+      label="单次请求图片上限"
+      layout="stacked"
+      tip="每次回复都会把对话里的图片一起发给模型。超过上限时，最早的几张换成占位文字，智能体需要时会重新查看。"
+      description={
+        hinted
+          ? `${transport === 'resent' ? '当前主模型' : '当前主模型可能'}每次回复都要重新发送全部图片，图片多时回复会变慢，建议设为 ${SUGGESTED_REQUEST_IMAGES} 张。`
+          : undefined
+      }
+    >
+      <div className={styles.controls}>
+        <Select
+          aria-label="单次请求图片上限"
+          value={String(value ?? 0)}
+          options={choices([0, ...REQUEST_IMAGE_LIMITS], value ?? 0, (count) =>
+            count === 0 ? '不限制' : `最多 ${count} 张`,
+          )}
+          onValueChange={(next) =>
+            update((current) => ({ ...current, maxRequestImages: next === '0' ? undefined : Number(next) }))
+          }
+        />
+      </div>
+    </PropertyRow>
+  )
+}

@@ -28,6 +28,7 @@ const base: AgentDraft = {
   aliases: '',
   visionKey: '',
   imageRestore: { recentMessages: 32, maxImages: 12 },
+  maxRequestImages: undefined,
   capabilities: {
     subagents: true,
     fileTools: false,
@@ -97,9 +98,20 @@ describe('agent draft', () => {
     const edited: AgentDraft = { ...base, imageRestore: { recentMessages: 64, maxImages: 0 } }
     expect(draftChanges(base, edited)).toEqual(['压缩后附回图片'])
     expect(identityChanged(base, edited)).toBe(true)
-    const saved = withImageRestore(defaultImageUnderstandingPolicy(), edited.imageRestore)
+    const saved = withImageRestore(defaultImageUnderstandingPolicy(), edited.imageRestore, undefined)
     expect(saved.history.restoreAfterCompaction).toEqual({ recentMessages: 64, maxImages: 0 })
     expect(saved.textModel).toEqual(defaultImageUnderstandingPolicy().textModel)
+  })
+
+  it('saves the request image limit with the identity, no limit leaving the field out', () => {
+    expect(base.maxRequestImages).toBeUndefined()
+    const edited: AgentDraft = { ...base, maxRequestImages: 12 }
+    expect(draftChanges(base, edited)).toEqual(['单次请求图片上限'])
+    expect(identityChanged(base, edited)).toBe(true)
+    const limited = withImageRestore(defaultImageUnderstandingPolicy(), edited.imageRestore, 12)
+    expect(limited.history.maxRequestImages).toBe(12)
+    const cleared = withImageRestore(limited, edited.imageRestore, undefined)
+    expect('maxRequestImages' in cleared.history).toBe(false)
   })
 
   it('saves sub-conversation models with the identity, trimmed, and keeps the default on its candidate', () => {

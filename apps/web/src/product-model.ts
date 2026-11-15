@@ -61,6 +61,8 @@ export interface ImageUnderstandingPolicy {
       readonly recentMessages: number
       readonly maxImages: number
     }
+    /** The most images one model request carries; absent means no limit. */
+    readonly maxRequestImages?: number | undefined
   }
   readonly textModel:
     | { readonly mode: 'disabled' }

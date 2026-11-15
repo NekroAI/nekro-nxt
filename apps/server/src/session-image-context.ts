@@ -64,6 +64,15 @@ import {
   type CompactionBudget,
 } from './compaction-pressure.js'
 import { projectTokenUsage } from './token-usage.js'
+import {
+  incomingImages,
+  observedRequestImages,
+  requestImageTransport,
+  restoredImageCap,
+  trimRequestImages,
+  type RequestImageLimits,
+  type RequestImageTransport,
+} from './request-image-limit.js'
 export interface AssetAccessRepository {
   getAssetById(id: AssetRecord['id']): AssetRecord | undefined
   canAccessAsset(assetId: AssetRecord['id'], channelId: ChannelId): boolean
@@ -98,6 +107,8 @@ export interface AgentImageDiagnostics {
     readonly error?: string
   }
   readonly blockers: readonly string[]
+  /** How the main model's route sends the images already in a conversation. */
+  readonly requestImages?: RequestImageTransport
 }
 
 /**
@@ -561,11 +572,23 @@ export interface InSessionCompactionModel {
   readonly reasoningEffort?: string
 }
 
+const SettingsObjectSchema = z.record(z.string(), z.unknown())
+
 export class NekroNxtCompactionEngine extends BasicCompactionEngine {
+  constructor(...args: ConstructorParameters<typeof BasicCompactionEngine>) {
+    super(...args)
+    this.ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
+      const decision = await next()
+      if (decision.kind === 'enter' && !signal.aborted) this.limitRequestImages(agent, decision.messages)
+      return decision
+    })
+  }
+
   private visualRestoreDepth = 0
   private modelChoice: ((agent: Agent) => InSessionCompactionModel | undefined) | undefined
   private thresholdChoice: ((agent: Agent, contextWindow: number) => number | undefined) | undefined
   private compactedListener: ((agent: Agent) => void) | undefined
+  private requestImageChoice: ((agent: Agent) => RequestImageLimits) | undefined
   private readonly stall = new CompactionStall()
   /** Per conversation, the price of one image and how many were in view just before the latest compaction. */
   private readonly imagesBeforeCompaction = new WeakMap<
@@ -672,6 +695,33 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
   /** Called once a compaction of a conversation has committed. */
   setCompactedListener(listener: (agent: Agent) => void): void {
     this.compactedListener = listener
+  }
+
+  /** The image count and byte limits a conversation's requests are held to; without a choice there are none. */
+  setRequestImageLimits(choose: (agent: Agent) => RequestImageLimits): void {
+    this.requestImageChoice = choose
+  }
+
+  requestImageLimitsFor(agent: Agent): RequestImageLimits {
+    return this.requestImageChoice?.(agent) ?? {}
+  }
+
+  /**
+   * Checked before every step, apart from token pressure: the limits are about how much each request sends, not
+   * about the context window. Runs once the rest of the step's preparation, compaction included, is done, so the
+   * conversation is rewritten once, and counts the images of the messages the step is about to add.
+   */
+  private limitRequestImages(agent: Agent, adding: readonly UserMessage[]): void {
+    try {
+      trimRequestImages({
+        session: agent.session,
+        limits: this.requestImageLimitsFor(agent),
+        incoming: incomingImages(adding),
+        log: (message) => this.ctx.logger.info(message),
+      })
+    } catch (error) {
+      this.ctx.logger.warn(`limiting request images failed: ${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   /** Which model an agent's in-session compaction uses; without one the conversation's own model is used. */
@@ -838,6 +888,37 @@ export class SessionImageContext {
     this.#assets = assets
     this.#members = members
   }
+  /**
+   * How `provider` sends the images already in a conversation, judged from its kind of route and from what the
+   * latest image-carrying request of each of `sessions` actually did.
+   */
+  requestImageTransport(provider: string, sessions: readonly Agent['session'][]): RequestImageTransport {
+    try {
+      const entry = this.#context.llm.listConfigurableProviders().find((candidate) => candidate.provider === provider)
+      if (entry === undefined) return 'unknown'
+      let baseURL: string | undefined
+      if (entry.settingsNs === 'llm-deepseek') {
+        const field = (value: unknown, key: string): unknown => {
+          const object = SettingsObjectSchema.safeParse(value)
+          return object.success ? object.data[key] : undefined
+        }
+        let profile: unknown = this.#context.settings
+          .describe({ redactSecrets: true })
+          .find((descriptor) => descriptor.ns === entry.settingsNs)?.value
+        for (const segment of entry.settingsPath) profile = field(profile, segment)
+        const configured = field(profile, 'baseURL')
+        baseURL = typeof configured === 'string' ? configured : process.env['DEEPSEEK_BASE_URL']
+      }
+      return requestImageTransport({
+        settingsNs: entry.settingsNs,
+        baseURL,
+        observed: sessions.map((session) => observedRequestImages(sessionEvents(session))),
+      })
+    } catch {
+      return 'unknown'
+    }
+  }
+
   async getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     const blockers: string[] = []
     let route: AgentImageDiagnostics['route']
@@ -933,6 +1014,10 @@ export class SessionImageContext {
             },
           }),
       blockers,
+      requestImages: this.requestImageTransport(
+        revision.model.provider,
+        sessions.map((agent) => agent.session),
+      ),
     }
   }
 
@@ -972,7 +1057,24 @@ export class SessionImageContext {
     }
     const skippedAssetIds: string[] = []
     try {
-      const policy = revision.imagePolicy.history.restoreAfterCompaction
+      const restorePolicy = revision.imagePolicy.history.restoreAfterCompaction
+      const compactionEngine = this.#context.compaction
+      const maxRequestImages =
+        compactionEngine instanceof NekroNxtCompactionEngine
+          ? compactionEngine.requestImageLimitsFor(agent).maxImages
+          : revision.imagePolicy.history.maxRequestImages
+      // Restored images join the ones compaction kept; together they stay a trimming step under the request limit,
+      // so the next step does not omit them again.
+      const policy = {
+        recentMessages: restorePolicy.recentMessages,
+        maxImages:
+          maxRequestImages === undefined
+            ? restorePolicy.maxImages
+            : Math.max(
+                0,
+                restoredImageCap(restorePolicy.maxImages, maxRequestImages) - visibleImageCount(agent.session),
+              ),
+      }
       if (policy.maxImages === 0) return
       const entries = [...this.#history.listEpisodeHistory(episodeId, { limit: policy.recentMessages })].reverse()
       const byDigest = new Map<

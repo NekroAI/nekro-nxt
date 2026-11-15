@@ -342,6 +342,8 @@ export const ImageUnderstandingPolicyApiSchema = z
             maxImages: z.number().int().min(0).max(50),
           })
           .strict(),
+        /** The most images one model request carries; absent means no limit. Optional for older hosts. */
+        maxRequestImages: z.number().int().min(4).max(100).optional(),
       })
       .strict(),
     textModel: z.discriminatedUnion('mode', [
@@ -2138,6 +2140,12 @@ export const HostSnapshotSchema = z
                 .strict()
                 .optional(),
               blockers: z.array(z.string()),
+              /**
+               * How the main model's route sends images already in the conversation: `uploaded` reuses uploaded files,
+               * `resent` sends every image in full with each request (also when a recent request fell back to that),
+               * `unknown` when the route cannot be told in advance. Absent from older hosts.
+               */
+              requestImages: z.enum(['uploaded', 'resent', 'unknown']).optional(),
             })
             .strict(),
           currentRevisionId: AgentRevisionIdSchema,

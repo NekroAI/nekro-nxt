@@ -64,6 +64,8 @@ export interface ImageUnderstandingPolicy {
       readonly recentMessages: number
       readonly maxImages: number
     }
+    /** The most images one model request carries; absent means no limit. */
+    readonly maxRequestImages?: number | undefined
   }
   readonly textModel:
     | { readonly mode: 'disabled' }
@@ -563,6 +565,10 @@ const AgentModelSelectionSchema = z
   })
   .strict()
 
+/** Bounds of `imagePolicy.history.maxRequestImages`; below four, one trimming step would leave no image at all. */
+export const MIN_REQUEST_IMAGES = 4
+export const MAX_REQUEST_IMAGES = 100
+
 export const ImageUnderstandingPolicySchema = z
   .object({
     history: z
@@ -576,6 +582,7 @@ export const ImageUnderstandingPolicySchema = z
           })
           .strict()
           .default({ recentMessages: 32, maxImages: 20 }),
+        maxRequestImages: z.number().int().min(MIN_REQUEST_IMAGES).max(MAX_REQUEST_IMAGES).optional(),
       })
       .strict()
       .default({
@@ -940,6 +947,10 @@ const normalizedRevisionPayload = (content: NormalizedAgentRevisionContent): Jso
         recentMessages: content.imagePolicy.history.restoreAfterCompaction.recentMessages,
         maxImages: content.imagePolicy.history.restoreAfterCompaction.maxImages,
       },
+      // Absent means no limit, so revisions saved before this setting keep their digest.
+      ...(content.imagePolicy.history.maxRequestImages === undefined
+        ? {}
+        : { maxRequestImages: content.imagePolicy.history.maxRequestImages }),
     },
     textModel:
       content.imagePolicy.textModel.mode === 'disabled'

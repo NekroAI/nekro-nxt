@@ -2494,6 +2494,79 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('limits the images one request carries and suggests a limit where every image is sent again', async () => {
+    const visionSnapshot = (requestImages: 'uploaded' | 'resent' | 'unknown') => ({
+      ...browserSnapshot,
+      models: browserSnapshot.models.map((model) => ({ ...model, inputModalities: ['text', 'image'] })),
+      agents: browserSnapshot.agents.map((agent) =>
+        agent.id === browserAgentId
+          ? {
+              ...agent,
+              imageDiagnostics: {
+                ...agent.imageDiagnostics,
+                route: { mode: 'direct', provider: 'openai', model: 'gpt-5' },
+                blockers: [],
+                requestImages,
+              },
+            }
+          : agent,
+      ),
+    })
+    const hint = '当前主模型每次回复都要重新发送全部图片，图片多时回复会变慢，建议设为 12 张。'
+    let revised: unknown
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        const limit = page.getByRole('combobox', { name: '单次请求图片上限', exact: true })
+        await playwrightExpect(limit).toHaveText('不限制')
+        await playwrightExpect(page.getByText(hint)).toBeVisible()
+        await limit.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/screenshots/agent-request-image-limit-hint-1440.png' })
+        await limit.click()
+        for (const label of [
+          '不限制',
+          '最多 6 张',
+          '最多 8 张',
+          '最多 12 张',
+          '最多 16 张',
+          '最多 24 张',
+          '最多 32 张',
+        ]) {
+          await playwrightExpect(page.getByRole('option', { name: label, exact: true })).toBeVisible()
+        }
+        await page.getByRole('option', { name: '最多 12 张', exact: true }).click()
+        await playwrightExpect(page.getByText(hint)).toHaveCount(0)
+        await limit.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/screenshots/agent-request-image-limit-1440.png' })
+        const saveBar = page.getByText('1 项未保存的修改').locator('xpath=../..')
+        await saveBar.getByRole('button', { name: '保存', exact: true }).click()
+        await playwrightExpect
+          .poll(() => revised)
+          .toMatchObject({
+            imagePolicy: { history: { maxRequestImages: 12, restoreAfterCompaction: { maxImages: 20 } } },
+          })
+      },
+      visionSnapshot('resent'),
+      async (page) => {
+        await page.route('**/api/agents/*/revision', async (request) => {
+          revised = request.request().postDataJSON()
+          await request.fulfill({ json: { currentRevisionId: 'arev_requestimages' } })
+        })
+      },
+    )
+    // A route that reuses uploaded files needs no limit, so it gets no suggestion.
+    await withProductPage(
+      `/agents/${browserAgentId}`,
+      async (page) => {
+        await playwrightExpect(page.getByRole('combobox', { name: '单次请求图片上限', exact: true })).toHaveText(
+          '不限制',
+        )
+        await playwrightExpect(page.getByText('建议设为 12 张')).toHaveCount(0)
+      },
+      visionSnapshot('uploaded'),
+    )
+  })
+
   test('reorders the extensions that process the agent messages before sending', async () => {
     const [document] = browserSnapshot.extensions
     const secondId = ExtensionIdSchema.parse('ext_signoff')
