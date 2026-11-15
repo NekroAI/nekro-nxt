@@ -1,4 +1,5 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, readdir, rm, statfs, writeFile } from 'node:fs/promises'
+import type * as FsPromises from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { get as httpsGet } from 'node:https'
@@ -11,6 +12,10 @@ import { HostApiContracts } from '@nekro-nxt/contracts'
 import type * as UpgradeBackup from '../src/upgrade-backup.js'
 import { createUpgradeBackup } from '../src/upgrade-backup.js'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof FsPromises>()
+  return { ...original, statfs: vi.fn(original.statfs) }
+})
 vi.mock('../src/upgrade-backup.js', async (importOriginal) => {
   const original = await importOriginal<typeof UpgradeBackup>()
   return { ...original, createUpgradeBackup: vi.fn(original.createUpgradeBackup) }
@@ -115,6 +120,53 @@ describe('upgrade startup and teardown boundaries', () => {
       await second.stop()
     }
   }, 30_000)
+
+  it('with upgrade backups off, a new release still needs 1 GB free before it migrates; a restart does not', async () => {
+    const { dataRoot, distIndex } = await fixture()
+    const options = {
+      dataRoot,
+      distIndex,
+      serveRecovery: true,
+      managementKey: 'synthetic-recovery-management-key-0003',
+    }
+    const installed = await startNekroServer({ ...options, releaseId: 'synthetic-unbacked-old' })
+    await installed.stop()
+    vi.stubEnv('NEKRO_UPGRADE_BACKUP', 'off')
+    const real = vi.mocked(statfs).getMockImplementation()!
+    const nearlyFull = () =>
+      vi.mocked(statfs).mockImplementation(async (...args: Parameters<typeof statfs>) => {
+        const actual = await real(...args)
+        // One free block: far below 1 GB on any filesystem.
+        return Object.assign(actual, { bavail: typeof actual.bavail === 'bigint' ? 1n : 1 })
+      })
+    try {
+      nearlyFull()
+      const blocked = await startNekroServer({ ...options, releaseId: 'synthetic-unbacked-new' })
+      try {
+        expect(blocked.recovery).toBe(true)
+      } finally {
+        await blocked.stop()
+      }
+      // Space freed: the failure came before any migration step, so a plain restart tries again.
+      vi.mocked(statfs).mockImplementation(real)
+      const upgraded = await startNekroServer({ ...options, releaseId: 'synthetic-unbacked-new' })
+      try {
+        expect(upgraded.recovery).not.toBe(true)
+      } finally {
+        await upgraded.stop()
+      }
+      nearlyFull()
+      const restarted = await startNekroServer({ ...options, releaseId: 'synthetic-unbacked-new' })
+      try {
+        expect(restarted.recovery).not.toBe(true)
+      } finally {
+        await restarted.stop()
+      }
+    } finally {
+      vi.mocked(statfs).mockImplementation(real)
+      vi.unstubAllEnvs()
+    }
+  }, 60_000)
 
   it('keeps auxiliary failures local and marks core failures unready until the snapshot recovers', async () => {
     const options = await fixture()

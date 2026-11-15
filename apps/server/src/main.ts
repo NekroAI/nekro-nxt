@@ -33,7 +33,7 @@ import {
 } from '@nekro-nxt/storage-sqlite'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { mkdir, mkdtemp, open, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, open, readFile, rename, rm, stat, statfs, writeFile } from 'node:fs/promises'
 import { isIP } from 'node:net'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -540,6 +540,12 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
  */
 class UpgradeNotStartedError extends Error {}
 
+/**
+ * With NEKRO_UPGRADE_BACKUP=off nothing measures the disk before migrating, and running out of space part way leaves a
+ * half-migrated data root. A new release or runtime still needs this much free space before it touches anything.
+ */
+const UNBACKED_UPGRADE_FREE_BYTES = 1024 ** 3
+
 const createRuntimeThroughUpgradeCoordinator = async (
   dataRoot: string,
   releaseId: string,
@@ -553,6 +559,7 @@ const createRuntimeThroughUpgradeCoordinator = async (
   let backupId: string | undefined
   let runtime: NekroRuntime | undefined
   let sourceRuntimeFingerprint: string | undefined
+  let sourceReleaseId: string | undefined
   const journal = await createServerUpgradeJournal(backupRoot, releaseId, () => backupId)
   let migrationBegan = false
   const { policy: backupPolicy } = await readUpgradeBackupPolicy(dataRoot)
@@ -582,12 +589,31 @@ const createRuntimeThroughUpgradeCoordinator = async (
           .strict()
           .parse(JSON.parse(await readFile(path.join(dataRoot, 'dsh', 'runtime-identity.json'), 'utf8')))
         sourceRuntimeFingerprint = identity.runtimeFingerprint
+        sourceReleaseId = identity.releaseId
       } catch (error) {
         if (!isMissing(error)) throw error
       }
     },
     createBackup: async () => {
-      if (backupPolicy.mode === 'off') return undefined
+      if (backupPolicy.mode === 'off') {
+        // Restarting the same release migrates nothing, and a new data root has nothing to lose.
+        const upgrading =
+          sourceReleaseId === undefined
+            ? await stat(options.coreDatabasePath).then(
+                () => true,
+                (error: unknown) => {
+                  if (isMissing(error)) return false
+                  throw error
+                },
+              )
+            : sourceReleaseId !== releaseId || sourceRuntimeFingerprint !== DSH_RUNTIME_FINGERPRINT
+        if (upgrading) {
+          const filesystem = await statfs(dataRoot)
+          if (filesystem.bavail * filesystem.bsize < UNBACKED_UPGRADE_FREE_BYTES)
+            throw new Error('磁盘剩余空间不足 1 GB，未修改原始数据。关闭升级备份时，升级前仍需要至少 1 GB 空间。')
+        }
+        return undefined
+      }
       const externalRoots = externalWorkspaceBackupRoots(dataRoot, options.developmentWorkspaceRoot)
       const backup = await createUpgradeBackup({
         dataRoot,
