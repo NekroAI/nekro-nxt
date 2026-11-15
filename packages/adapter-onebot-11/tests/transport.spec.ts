@@ -29,8 +29,11 @@ afterEach(async () => {
   )
 })
 
-const serve = async (onConnection: (socket: WebSocket, authorization: string | undefined) => void) => {
-  const server = new WebSocketServer({ port: 0 })
+const serve = async (
+  onConnection: (socket: WebSocket, authorization: string | undefined) => void,
+  options: { readonly autoPong?: boolean } = {},
+) => {
+  const server = new WebSocketServer({ port: 0, ...options })
   servers.push(server)
   await new Promise<void>((resolve) => server.once('listening', resolve))
   server.on('connection', (socket, request) => onConnection(socket, request.headers.authorization))
@@ -256,6 +259,46 @@ describe('OneBot forward WebSocket transport', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(connections).toBe(settledConnections)
   })
+
+  it.each([true, false])(
+    'pings a socket that only receives and reconnects when the peer stops answering (peer answers: %s)',
+    async (answers) => {
+      let connections = 0
+      const endpoint = await serve(
+        (socket) => {
+          connections += 1
+          socket.on('message', (raw) => {
+            const request = decodeRequest(raw)
+            socket.send(
+              JSON.stringify({
+                status: 'ok',
+                retcode: 0,
+                data: request['action'] === 'get_login_info' ? { user_id: '90003' } : {},
+                echo: request['echo'],
+              }),
+            )
+          })
+        },
+        // A frozen peer machine: the TCP connection stays open and nothing comes back.
+        { autoPong: answers },
+      )
+      const fake = createFakeContext()
+      const client = new OneBotWebSocketClient({
+        context: fake.context,
+        endpoint,
+        onEvent: () => Promise.resolve(),
+        reconnectDelaysMs: [5],
+        heartbeatIntervalMs: 20,
+      })
+      await client.start()
+      await waitFor(() => client.connected)
+      if (answers) {
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        expect(connections).toBe(1)
+      } else await waitFor(() => connections >= 2 && client.connected)
+      await client.stop()
+    },
+  )
 
   it('times out submitted Actions as unknown and serializes inbound event handling', async () => {
     let releaseFirst: (() => void) | undefined

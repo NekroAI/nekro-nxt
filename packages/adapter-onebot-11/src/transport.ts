@@ -11,6 +11,11 @@ import { z } from 'zod'
 
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000
+/**
+ * A peer whose machine froze or lost power sends no FIN, so a socket that only receives never learns it is dead. A
+ * WebSocket ping every interval finds out: no frame back by the next one closes the socket and reconnects.
+ */
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000
 const ACCOUNT_STATE_KEY = 'onebot-11/account-lock'
 
 export type OneBotObject = Readonly<Record<string, unknown>>
@@ -42,6 +47,7 @@ export interface OneBotWebSocketClientOptions {
   readonly onEvent: (event: OneBotObject) => Promise<void>
   readonly requestTimeoutMs?: number
   readonly reconnectDelaysMs?: readonly number[]
+  readonly heartbeatIntervalMs?: number
 }
 
 const OneBotObjectSchema = z.record(z.string(), z.unknown())
@@ -100,6 +106,7 @@ export class OneBotWebSocketClient {
   readonly #onEvent: OneBotWebSocketClientOptions['onEvent']
   readonly #requestTimeoutMs: number
   readonly #reconnectDelaysMs: readonly number[]
+  readonly #heartbeatIntervalMs: number
   readonly #pending = new Map<string, PendingAction>()
   readonly #optionalCapabilities = new Map<string, AdapterOptionalCapabilityStatus>()
   #eventQueue: Promise<void> = Promise.resolve()
@@ -125,6 +132,7 @@ export class OneBotWebSocketClient {
     this.#onEvent = options.onEvent
     this.#requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS
     this.#reconnectDelaysMs = options.reconnectDelaysMs ?? [1_000, 2_000, 4_000, 8_000, 16_000, 30_000]
+    this.#heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS
   }
 
   get connected(): boolean {
@@ -246,15 +254,35 @@ export class OneBotWebSocketClient {
     })
     this.#socket = socket
     let ready = Promise.resolve(false)
+    let heard = true
+    let heartbeat: ReturnType<typeof setInterval> | undefined
     socket.on('open', () => {
       ready = this.#initialize(generation, socket)
       this.#initialization = ready
+      heartbeat = setInterval(() => {
+        // terminate() emits close, which schedules the reconnect.
+        if (!heard) {
+          socket.terminate()
+          return
+        }
+        heard = false
+        socket.ping()
+      }, this.#heartbeatIntervalMs)
     })
-    socket.on('message', (data, isBinary) => this.#receive(generation, data, isBinary, ready))
+    socket.on('pong', () => {
+      heard = true
+    })
+    socket.on('message', (data, isBinary) => {
+      heard = true
+      this.#receive(generation, data, isBinary, ready)
+    })
     socket.on('error', () => {
       // close owns diagnostics and reconnect scheduling.
     })
-    socket.on('close', (_code, reason) => this.#closed(generation, socket, reason.toString()))
+    socket.on('close', (_code, reason) => {
+      clearInterval(heartbeat)
+      this.#closed(generation, socket, reason.toString())
+    })
   }
 
   async #initialize(generation: number, socket: WebSocket): Promise<boolean> {
