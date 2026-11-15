@@ -43,4 +43,6 @@ test('unavailable forwarded content renders as a rich notice in the production c
   await expect(page.getByText('转发的聊天记录（内容不可读取）', { exact: true })).toBeVisible()
   await expect(page.getByText('你的QQ暂不支持查看[转发多条消息]，请期待后续版本。', { exact: true })).toHaveCount(0)
   expect(failures).toEqual([])
+  // The conversation keeps polling; a refetch still in the handler when the test ends would read a disposed response.
+  await page.unrouteAll({ behavior: 'ignoreErrors' })
 })
