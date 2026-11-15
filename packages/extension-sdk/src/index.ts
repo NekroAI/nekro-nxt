@@ -573,6 +573,12 @@ export interface NxtMemberSummary {
   readonly self?: true
   /** The account of another agent on this host that answers the same platform channel. */
   readonly localAgent?: { readonly name?: string }
+  /**
+   * SDK 17. The member's account id on the platform, such as a QQ number; only for extensions that declare
+   * `permissions.agent.members.platformUserId`. Ids are per connection: the same person on another connection or
+   * platform has another id.
+   */
+  readonly platformUserId?: string
 }
 
 export interface NxtCallContext {
@@ -1760,6 +1766,7 @@ const HOST_SERVICES_BY_TOPIC = {
   context: [
     'ctx.nxt.context.current() → { agent, channel, latestInbound?: { sender, text }, trigger?: { kind, sender?, message?, administrator } }：当前智能体、频道、最近一条入站消息和这一轮的触发者；channel.selfMemberId 是智能体自己在本频道的机器人账号（内置频道没有）。成员摘要中 self: true 表示智能体自己，localAgent 表示本机其他智能体的账号。群里消息多时 latestInbound 可能是别人发的，要知道这一轮在回应谁就读 trigger.sender；trigger.administrator 表示发起者是 NekroNXT 管理员。判断身份只看 trigger，不要用工具参数里的 memberId，那是模型自己填的，对话内容能诱导它。智能体自己醒来（定时任务、后台作业）时没有 trigger。',
     'ctx.nxt.members.describe(memberId) → { memberId, displayName?, self?, localAgent? } | undefined：判断当前频道某个成员是谁，例如避免给自己或本机其他智能体点赞；不需要权限。',
+    '成员摘要（trigger.sender、latestInbound.sender、history 消息的 sender、members.describe、入站钩子的 message.sender）默认不含平台账号。要拿成员的平台账号（如 QQ 号），声明 permissions.agent.members: { platformUserId: true }，成员摘要会多出 platformUserId；需要 requires.sdk 至少为 17，动态创造会自动声明，用户启用扩展时会看到这项权限。只在确实要和平台账号打交道时声明（例如对接按 QQ 号记录的外部服务），存储键仍用 memberId。',
     'ctx.nxt.history.list({ limit, before }) / search(query)：读取当前频道聊天记录；需要 history: { read: true }。',
     "ctx.nxt.index / nxt.index：宿主维护的检索索引。在 index: { collections: [{ name, fields: [{ name, weight }], filters }] } 中声明集合（最多 4 个文本字段、4 个过滤字段；两层都声明时定义必须一致）。upsert(collection, id, { fields, filters }) / delete(collection, id) / count(collection) / query(collection, text, { limit, filter: [[{ field, value }]] }) → { hits: [{ id, score }], mode, degraded? }；filter 的每组都要满足，组内满足一个即可。宿主按关键词检索，管理员在「设置 → 附加功能」安装语义检索后自动加入语义检索（mode: 'hybrid'），扩展不需要处理向量。",
     "ctx.nxt.llm.complete({ system, messages: [{ role: 'user', text }], maxOutputTokens }) → { text }：用智能体当前的模型完成一次辅助任务（分析、分类、改写），计入智能体用量；需要 llm: { maxCallsPerTurn, maxOutputTokens }。不能流式输出，也不能调用工具。",

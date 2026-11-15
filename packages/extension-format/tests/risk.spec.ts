@@ -25,6 +25,19 @@ describe('permission summary', () => {
     expect(items.filter((item) => item.layer === 'host').map(({ key }) => key)).toEqual(['files', 'media'])
   })
 
+  it('lists member platform accounts with the wording NekroNXT shows on approval', () => {
+    const items = summarizePermissions({ permissions: { agent: { members: { platformUserId: true } } } })
+    expect(items).toEqual([
+      {
+        key: 'members.platformUserId',
+        level: 'elevated',
+        label: '查看频道成员的平台账号',
+        detail: '成员在所在平台上的账号 ID',
+        layer: 'agent',
+      },
+    ])
+  })
+
   it('names the address fields of unrestricted network access', () => {
     const [plain] = summarizePermissions({
       permissions: { agent: { network: { mode: 'unrestricted', purpose: '下载生成的图片' } } },

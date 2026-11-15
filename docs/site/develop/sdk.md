@@ -55,7 +55,7 @@ npm i -D @nekro-nxt/extension-sdk
 | `speech` | 用附加功能里的语音识别转写 | `speech` |
 | `index` | 宿主维护的检索索引，支持语义检索 | `index: { collections }` |
 | `context` | 当前智能体、频道、最近一条入站消息 | 无 |
-| `members` | 读取频道成员的信息 | 无 |
+| `members` | 读取频道成员的信息；成员的平台账号（如 QQ 号）默认不给 | 无；要平台账号声明 `members: { platformUserId: true }`，需要 `requires: { sdk: 17 }` |
 | `history` | 只读当前频道的对话记录 | `history: { read: true }` |
 | `platform` | 调用当前频道所在平台的动作 | `platform: { actions, raw }` |
 | `jobs` | 定时任务：建、查、取消 | `jobs` |

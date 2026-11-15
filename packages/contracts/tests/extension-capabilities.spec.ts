@@ -11,6 +11,7 @@ import {
   type ExtensionCapabilities,
   EXTENSION_OUTBOUND_SDK_LEVEL,
   EXTENSION_FILES_SDK_LEVEL,
+  EXTENSION_MEMBER_PLATFORM_ID_SDK_LEVEL,
   ExtensionPermissionsSchema,
   outboundProcessesBeforeSend,
   requiredExtensionSdkLevel,
@@ -175,6 +176,8 @@ describe('extensionCapabilitiesExpand', () => {
     ['new storage scope', { storage: { scopes: ['agent'] } }, { storage: { scopes: ['agent', 'shared'] } }, true],
     ['quota only', { storage: { scopes: ['agent'] } }, { storage: { scopes: ['agent'], quotaBytes: 4096 } }, false],
     ['history added', {}, { history: { read: true } }, true],
+    ['member platform accounts added', {}, { members: { platformUserId: true } }, true],
+    ['member platform accounts dropped', { members: { platformUserId: true } }, {}, false],
     [
       'new platform action',
       { platform: { actions: [{ adapter: 'onebot', action: 'like_member' }] } },
@@ -600,6 +603,40 @@ describe('work files, asset reads and high-detail tool images', () => {
         ExtensionPermissionsSchema.parse({ agent: { network: { mode: 'unrestricted', purpose: '下载生成的图片' } } }),
       ).level,
     ).toBe(7)
+  })
+})
+
+describe('member platform accounts', () => {
+  it('accepts only platformUserId: true', () => {
+    expect(caps({ members: { platformUserId: true } }).members).toEqual({ platformUserId: true })
+    expect(() => caps({ members: { platformUserId: false } })).toThrow()
+    expect(() => caps({ members: {} })).toThrow()
+    expect(() => ExtensionPermissionsSchema.parse({ host: { members: { platformUserId: true } } })).toThrow()
+  })
+
+  it('lists it as a sensitive permission that names what the extension sees', () => {
+    expect(summarizeExtensionCapabilities(caps({ members: { platformUserId: true } }))).toEqual([
+      {
+        key: 'members.platformUserId',
+        risk: 'sensitive',
+        label: '查看频道成员的平台账号',
+        detail: '成员在所在平台上的账号 ID',
+      },
+    ])
+  })
+
+  it('needs SDK level 17, above every other capability', () => {
+    expect(EXTENSION_MEMBER_PLATFORM_ID_SDK_LEVEL).toBe(17)
+    expect(
+      requiredExtensionSdkLevel(
+        ExtensionPermissionsSchema.parse({
+          agent: {
+            members: { platformUserId: true },
+            network: { mode: 'unrestricted', purpose: '下载生成的图片', fields: ['baseUrl'] },
+          },
+        }),
+      ),
+    ).toEqual({ level: 17, capabilities: ['成员的平台账号'] })
   })
 })
 

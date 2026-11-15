@@ -39,6 +39,7 @@ import type {
   NxtJobHandler,
   NxtDataMigrationHandler,
   NxtInboundMessage,
+  NxtMemberSummary,
 } from '@nekro-nxt/extension-sdk'
 import { createFakeAdapterHostContext } from '@nekro-nxt/test-harness'
 import { createHash } from 'node:crypto'
@@ -46,7 +47,13 @@ import { pathToFileURL } from 'node:url'
 import { z } from 'zod'
 import { createExtensionEgress } from './extension-egress.js'
 import { memoryNxtJobs, memoryNxtStorage, previewPlatformResult } from './extension-host-backends.js'
-import { createHostLayerNxt, createNxtHostService, type NxtServiceBackends } from './extension-host-service.js'
+import {
+  createHostLayerNxt,
+  createNxtHostService,
+  seesMemberPlatformUserIds,
+  type NxtMemberDetail,
+  type NxtServiceBackends,
+} from './extension-host-service.js'
 
 const IMPORT_ORIGIN = {
   episodeId: 'import',
@@ -512,16 +519,25 @@ const verifyClient = async (
   return evidence
 }
 
-const VERIFICATION_INBOUND_MESSAGE: NxtInboundMessage = {
+/** A made-up platform account, given only to extensions that declare `members.platformUserId`. */
+const VERIFICATION_PLATFORM_USER_ID = '10000'
+
+const verificationMember = (detail: NxtMemberDetail | undefined, memberId = 'mbr_VERIFY'): NxtMemberSummary => ({
+  memberId,
+  ...(memberId === 'mbr_VERIFY' ? { displayName: '验证成员' } : {}),
+  ...(detail?.platformUserId === true ? { platformUserId: VERIFICATION_PLATFORM_USER_ID } : {}),
+})
+
+const verificationInboundMessage = (detail: NxtMemberDetail): NxtInboundMessage => ({
   logicalMessageId: 'msg_VERIFY',
   channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
-  sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+  sender: verificationMember(detail),
   text: '验证消息',
   images: [],
   mentionsAgent: true,
   wouldTrigger: true,
   receivedAt: 1,
-}
+})
 
 const InboundDecisionSchema = z
   .object({
@@ -531,22 +547,22 @@ const InboundDecisionSchema = z
   })
   .strict()
 
-const VERIFICATION_CALL_CONTEXT: NxtCallContext = {
+const verificationCallContext = (detail: NxtMemberDetail): NxtCallContext => ({
   agent: { id: 'agt_VERIFY', name: '验证智能体' },
   channel: { id: 'chn_VERIFY', kind: 'group', displayName: '验证频道' },
   latestInbound: {
     logicalMessageId: 'msg_VERIFY',
-    sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+    sender: verificationMember(detail),
     text: '验证消息',
     receivedAt: 1,
   },
   trigger: {
     kind: 'message',
-    sender: { memberId: 'mbr_VERIFY', displayName: '验证成员' },
+    sender: verificationMember(detail),
     message: { logicalMessageId: 'msg_VERIFY', text: '验证消息', receivedAt: 1 },
     administrator: false,
   },
-}
+})
 
 /**
  * `nxt` backends for save/import verification: throwaway storage, synthetic call context and assets, no saved secrets.
@@ -591,7 +607,7 @@ const verificationBackends = (
     raw: (_binding, api) => Promise.resolve(previewPlatformResult('原始接口', api)),
     selfPlatformUserId: () => Promise.resolve(undefined),
   },
-  members: { describe: (_channelId, memberId) => Promise.resolve({ memberId }) },
+  members: { describe: (_channelId, memberId, detail) => Promise.resolve(verificationMember(detail, memberId)) },
   secret: () => Promise.resolve(undefined),
   // Verification never spends the user's model quota; a fixed reply exercises the call path.
   complete: () => Promise.resolve({ text: '验证模型回复' }),
@@ -607,7 +623,8 @@ const verificationBackends = (
       byteSize: Buffer.byteLength(asset.base64 ?? asset.text ?? '', asset.base64 === undefined ? 'utf8' : 'base64'),
       mediaType: asset.mediaType ?? 'application/octet-stream',
     }),
-  callContext: () => Promise.resolve(VERIFICATION_CALL_CONTEXT),
+  callContext: (binding) =>
+    Promise.resolve(verificationCallContext({ platformUserId: seesMemberPlatformUserIds(binding.capabilities()) })),
   history: {
     list: () => Promise.resolve({ messages: [] }),
     search: () => Promise.resolve([]),
@@ -854,7 +871,10 @@ export const verifyImportedExtensionRevision: ImportedRevisionVerifier = async (
     }
     if (inbound !== undefined) {
       const declared = agentCapabilities?.inboundHook
-      const decision = await inbound(VERIFICATION_INBOUND_MESSAGE, nxt)
+      const decision = await inbound(
+        verificationInboundMessage({ platformUserId: seesMemberPlatformUserIds(agentCapabilities) }),
+        nxt,
+      )
       if (decision !== undefined && decision !== null) {
         const parsed = InboundDecisionSchema.safeParse(decision)
         if (!parsed.success) throw new Error(`入站处理函数返回了无效决定：${parsed.error.issues[0]?.message ?? ''}`)

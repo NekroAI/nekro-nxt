@@ -145,6 +145,7 @@ const KNOWN_CAPABILITIES = new Set([
   'speech',
   'index',
   'history',
+  'members',
   'inboundHook',
   'outbound',
   'jobs',
@@ -265,6 +266,15 @@ const capabilityItems = (
   }
   if (asObject(capabilities['history']) !== undefined) {
     items.push({ key: 'history', level: 'high', label: '读取当前频道的聊天记录' })
+  }
+  if (asObject(capabilities['members'])?.['platformUserId'] === true) {
+    // Wording matches what NekroNXT shows when approving the same capability.
+    items.push({
+      key: 'members.platformUserId',
+      level: 'elevated',
+      label: '查看频道成员的平台账号',
+      detail: '成员在所在平台上的账号 ID',
+    })
   }
   const hook = asObject(capabilities['inboundHook'])
   if (hook !== undefined) {

@@ -3,6 +3,7 @@ import type { BindingRecord, ChannelEventRecord } from '@nekro-nxt/core'
 import type { AgentId, ChannelEventId, ExtensionCapabilities } from '@nekro-nxt/contracts'
 import type { NxtHostService, NxtInboundDecision, NxtInboundMessage } from '@nekro-nxt/extension-sdk'
 import type { PersistentInboundHandler } from './persistent-extension-mounts.js'
+import { seesMemberPlatformUserIds } from './extension-host-service.js'
 
 export const INBOUND_ANNOTATION_MAX_CHARS = 500
 
@@ -41,7 +42,12 @@ export interface ExtensionInboundHookGateOptions {
   }
   /** `nxt` bound to the message's channel for one handler; no prompt registration. */
   readonly nxtFor: (handler: PersistentInboundHandler, channelId: string) => NxtHostService
-  readonly message: (event: ChannelEventRecord, defaultTriggered: boolean) => NxtInboundMessage
+  /** `platformUserId` asks for the sender's platform account id, for handlers that declare `members.platformUserId`. */
+  readonly message: (
+    event: ChannelEventRecord,
+    defaultTriggered: boolean,
+    detail: { readonly platformUserId: boolean },
+  ) => NxtInboundMessage
   readonly store: InboundHookDecisionStore
   readonly now: () => number
   readonly diagnostic?: (extensionId: string, message: string) => void
@@ -117,7 +123,14 @@ export class ExtensionInboundHookGate implements InboundHookGate {
         ),
     ).then((notes) => notes.flat())
     const handlers = this.#options.handlers(input.binding.agentId)
-    let message: NxtInboundMessage | undefined
+    const messages = new Map<boolean, NxtInboundMessage>()
+    const messageFor = (platformUserId: boolean): NxtInboundMessage => {
+      const cached = messages.get(platformUserId)
+      if (cached !== undefined) return cached
+      const built = this.#options.message(input.event, input.defaultTriggered, { platformUserId })
+      messages.set(platformUserId, built)
+      return built
+    }
     const decidedBy: string[] = []
     const diagnostics: { extensionId: string; message: string }[] = []
     let trigger: InboundHookDecision['trigger'] = 'default'
@@ -134,7 +147,7 @@ export class ExtensionInboundHookGate implements InboundHookGate {
         answer = await timeout(
           Promise.resolve(
             handler.handler(
-              (message ??= this.#options.message(input.event, input.defaultTriggered)),
+              messageFor(seesMemberPlatformUserIds(capabilities)),
               this.#options.nxtFor(handler, input.event.channelId),
             ),
           ),

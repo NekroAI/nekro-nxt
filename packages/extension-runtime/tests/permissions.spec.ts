@@ -30,3 +30,21 @@ describe('approval digest of media, commands and speech', () => {
     ).toBe(false)
   })
 })
+
+describe('approval digest of member platform accounts', () => {
+  it('changes when the extension starts asking for them, and adding them needs a new approval', () => {
+    expect(hostUiPermissionDigest(declaration({ members: { platformUserId: true } }))).not.toBe(
+      hostUiPermissionDigest(declaration({})),
+    )
+    const granted = {
+      ownerKey: 'ext_FIXTURE',
+      artifactDigest: 'a'.repeat(64),
+      permissionDigest: 'b'.repeat(64),
+      declaration: declaration({ history: { read: true } }),
+      approvedAt: 1,
+    }
+    expect(
+      permissionRequirement(declaration({ history: { read: true }, members: { platformUserId: true } }), granted),
+    ).toMatchObject({ approvalRequired: true })
+  })
+})

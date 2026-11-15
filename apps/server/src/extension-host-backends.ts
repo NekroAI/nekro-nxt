@@ -6,6 +6,7 @@ import {
   ExtensionIdSchema,
   type AgentId,
   type ChannelId,
+  type ChannelMemberId,
   type CredentialId,
   type CredentialUsage,
   type ExtensionId,
@@ -29,6 +30,8 @@ import { ExtensionStorageQuotaError } from '@nekro-nxt/storage-sqlite'
 import {
   bindingSecretReference,
   NxtCapabilityError,
+  seesMemberPlatformUserIds,
+  type NxtMemberDetail,
   type NxtRequestSecret,
   type NxtServiceBackends,
   type NxtServiceBinding,
@@ -105,13 +108,21 @@ export interface NxtProductFacts {
   readonly accountPlatformUserId?: (connectionId: string) => string | undefined
   /** What started one episode's current turn; absent hosts give extensions no trigger. */
   readonly turnTrigger?: (episodeId: string) => TurnTrigger | undefined
+  /** A member's account id on its connection's platform, for extensions that declare `members.platformUserId`. */
+  readonly memberPlatformUserId?: (memberId: ChannelMemberId) => string | undefined
 }
 
-const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMemberSummary | undefined => {
+const member = (
+  facts: NxtProductFacts,
+  memberId: string | undefined,
+  detail: NxtMemberDetail = {},
+): NxtMemberSummary | undefined => {
   if (memberId === undefined) return undefined
   const parsed = ChannelMemberIdSchema.safeParse(memberId)
   const displayName = parsed.success ? facts.history.getChannelMember(parsed.data)?.displayName : undefined
   const relation = parsed.success ? facts.members?.describe(parsed.data) : undefined
+  const platformUserId =
+    parsed.success && detail.platformUserId === true ? facts.memberPlatformUserId?.(parsed.data) : undefined
   return {
     memberId,
     ...(displayName === undefined ? {} : { displayName }),
@@ -119,6 +130,7 @@ const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMember
     ...(relation?.kind === 'local-agent'
       ? { localAgent: relation.agentName === undefined ? {} : { name: relation.agentName } }
       : {}),
+    ...(platformUserId === undefined ? {} : { platformUserId }),
   }
 }
 
@@ -126,11 +138,15 @@ const member = (facts: NxtProductFacts, memberId: string | undefined): NxtMember
  * `context.current().trigger`: an inbound message, or a finished wait. Other control events (scheduled tasks, jobs,
  * the console opening a turn) give none.
  */
-const callTrigger = (facts: NxtProductFacts, found: TurnTrigger | undefined): NxtTurnTrigger | undefined => {
+const callTrigger = (
+  facts: NxtProductFacts,
+  found: TurnTrigger | undefined,
+  detail: NxtMemberDetail,
+): NxtTurnTrigger | undefined => {
   const event = found?.event
   if (found === undefined || event === undefined) return undefined
   if (event.kind === 'control' && event.facts?.['responseWait'] === undefined) return undefined
-  const sender = member(facts, found.senderMemberId)
+  const sender = member(facts, found.senderMemberId, detail)
   return {
     kind: event.kind === 'control' ? 'wait-ended' : 'message',
     ...(sender === undefined ? {} : { sender }),
@@ -185,8 +201,12 @@ const decodeCursor = (cursor: string): { readonly occurredAt: number; readonly s
   throw new TypeError('history.list 的 before 必须是上一页返回的 cursor。')
 }
 
-const historyMessage = (facts: NxtProductFacts, entry: ChannelHistoryEntry): NxtHistoryMessage => {
-  const sender = entry.source === 'channel-event' ? member(facts, entry.senderMemberId) : undefined
+const historyMessage = (
+  facts: NxtProductFacts,
+  entry: ChannelHistoryEntry,
+  detail: NxtMemberDetail,
+): NxtHistoryMessage => {
+  const sender = entry.source === 'channel-event' ? member(facts, entry.senderMemberId, detail) : undefined
   return {
     logicalMessageId: entry.logicalMessageId,
     direction: entry.source === 'channel-event' ? 'inbound' : 'outbound',
@@ -281,11 +301,11 @@ export const createNxtProductBackends = (
     },
   },
   members: {
-    describe: (channelId, memberId) => {
+    describe: (channelId, memberId, detail) => {
       const parsed = ChannelMemberIdSchema.safeParse(memberId)
       if (!parsed.success || facts.history.getChannelMember(parsed.data)?.channelId !== channelId)
         return Promise.resolve(undefined)
-      return Promise.resolve(member(facts, parsed.data))
+      return Promise.resolve(member(facts, parsed.data, detail))
     },
   },
   secret: async (binding: NxtServiceBinding, key: string) =>
@@ -322,9 +342,10 @@ export const createNxtProductBackends = (
       .listChannelHistory(channelId, { limit: 20 })
       .find((entry) => entry.source === 'channel-event' && isConversationEntry(entry))
     const connectionName = facts.getConnectionName(channel.connectionId)
-    const sender = latest?.source === 'channel-event' ? member(facts, latest.senderMemberId) : undefined
+    const detail: NxtMemberDetail = { platformUserId: seesMemberPlatformUserIds(binding.capabilities()) }
+    const sender = latest?.source === 'channel-event' ? member(facts, latest.senderMemberId, detail) : undefined
     const episodeId = binding.episodeId?.()
-    const trigger = episodeId === undefined ? undefined : callTrigger(facts, facts.turnTrigger?.(episodeId))
+    const trigger = episodeId === undefined ? undefined : callTrigger(facts, facts.turnTrigger?.(episodeId), detail)
     return Promise.resolve({
       agent: { id: binding.agentId, name: facts.getAgentName(binding.agentId) },
       channel: {
@@ -355,19 +376,20 @@ export const createNxtProductBackends = (
         limit: options.limit,
         ...(options.before === undefined ? {} : { before: decodeCursor(options.before) }),
       })
-      const messages = entries.filter(isConversationEntry).map((entry) => historyMessage(facts, entry))
+      const detail = { platformUserId: options.platformUserId === true }
+      const messages = entries.filter(isConversationEntry).map((entry) => historyMessage(facts, entry, detail))
       const last = entries.at(-1)
       return Promise.resolve({
         messages,
         ...(last === undefined || entries.length < options.limit ? {} : { next: encodeCursor(last) }),
       })
     },
-    search(channelId, query, limit) {
+    search(channelId, query, limit, detail = {}) {
       const hits = facts.history
         .searchChannelHistory(ChannelIdSchema.parse(channelId), query, { limit })
         .map((hit) => hit.entry)
         .filter(isConversationEntry)
-        .map((entry) => historyMessage(facts, entry))
+        .map((entry) => historyMessage(facts, entry, detail))
       return Promise.resolve(hits)
     },
   },

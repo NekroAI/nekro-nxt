@@ -5,6 +5,7 @@ import {
   hostLayerAsCapabilities,
   EXTENSION_SDK_BASE_LEVEL,
   EXTENSION_UNRESTRICTED_FIELDS_SDK_LEVEL,
+  EXTENSION_MEMBER_PLATFORM_ID_SDK_LEVEL,
   EXTENSION_FILES_SDK_LEVEL,
   EXTENSION_OUTBOUND_SDK_LEVEL,
 } from './extension-capabilities.js'
@@ -551,6 +552,8 @@ export type ExtensionDataHookName = keyof typeof EXTENSION_DATA_HOOK_PERMISSIONS
 export const requiredExtensionSdkLevel = (
   permissions: ExtensionPermissions | undefined,
 ): { readonly level: number; readonly capabilities: readonly string[] } => {
+  if (permissions?.agent?.members !== undefined)
+    return { level: EXTENSION_MEMBER_PLATFORM_ID_SDK_LEVEL, capabilities: ['成员的平台账号'] }
   const unrestrictedFields = [permissions?.host?.network, permissions?.agent?.network].some(
     (network) => network?.mode === 'unrestricted' && network.fields !== undefined,
   )

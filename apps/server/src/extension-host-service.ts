@@ -215,7 +215,7 @@ export interface NxtServiceBackends {
   readonly createAsset: (channelId: string, input: NxtAssetCreateInput) => Promise<NxtAssetRecord>
   readonly callContext: (binding: NxtServiceBinding) => Promise<NxtCallContext>
   readonly members: {
-    describe(channelId: string, memberId: string): Promise<NxtMemberSummary | undefined>
+    describe(channelId: string, memberId: string, detail?: NxtMemberDetail): Promise<NxtMemberSummary | undefined>
   }
   readonly platform: {
     /** The Adapter of the channel, its raw-API support and the typed actions valid for this channel kind. */
@@ -247,9 +247,14 @@ export interface NxtServiceBackends {
   readonly history: {
     list(
       channelId: string,
-      options: { readonly limit: number; readonly before?: string },
+      options: { readonly limit: number; readonly before?: string } & NxtMemberDetail,
     ): Promise<{ readonly messages: readonly NxtHistoryMessage[]; readonly next?: string }>
-    search(channelId: string, query: string, limit: number): Promise<readonly NxtHistoryMessage[]>
+    search(
+      channelId: string,
+      query: string,
+      limit: number,
+      detail?: NxtMemberDetail,
+    ): Promise<readonly NxtHistoryMessage[]>
   }
   readonly library: ExtensionLibrary
   /** Work files; dynamic runs and verification use a throwaway directory. */
@@ -340,6 +345,16 @@ export class NxtCapabilityError extends Error {
 
 const DYNAMIC_RENDER_TIMEOUT_MS = 2000
 /** Extension static sections sit after the product's own channel and communication policy sections. */
+/** What member summaries handed to one extension include beyond id, name and relation. */
+export interface NxtMemberDetail {
+  /** The member's platform account id; only for extensions that declare `members.platformUserId`. */
+  readonly platformUserId?: boolean
+}
+
+/** Whether approved capabilities let the extension see members' platform account ids. */
+export const seesMemberPlatformUserIds = (capabilities: ExtensionCapabilities | undefined): boolean =>
+  capabilities?.members?.platformUserId === true
+
 const STATIC_SECTION_ORDER = 30
 const DYNAMIC_CONTEXT_ORDER = 900
 
@@ -1446,7 +1461,10 @@ export const createNxtHostService = (
       current: () => backends.callContext(binding),
     },
     members: {
-      describe: (memberId) => backends.members.describe(binding.channelId, memberId),
+      describe: (memberId) =>
+        backends.members.describe(binding.channelId, memberId, {
+          platformUserId: seesMemberPlatformUserIds(binding.capabilities()),
+        }),
     },
     history: {
       async list(options) {
@@ -1455,13 +1473,16 @@ export const createNxtHostService = (
         return backends.history.list(binding.channelId, {
           limit,
           ...(options?.before === undefined ? {} : { before: options.before }),
+          platformUserId: seesMemberPlatformUserIds(binding.capabilities()),
         })
       },
       async search(query, options) {
         requireCapability(binding, 'history', 'history（读取频道聊天记录）')
         if (!query.trim()) throw new NxtCapabilityError('搜索内容不能为空。')
         const limit = Math.min(Math.max(Math.trunc(options?.limit ?? 20), 1), 100)
-        return backends.history.search(binding.channelId, query, limit)
+        return backends.history.search(binding.channelId, query, limit, {
+          platformUserId: seesMemberPlatformUserIds(binding.capabilities()),
+        })
       },
     },
     platform: {

@@ -13,8 +13,12 @@ import { z } from 'zod'
  * profiles (`commands`) and speech to text (`speech`).
  * Level 15 adds downloads into work files (`files.fromUrl`).
  * Level 16 adds address fields to `network.mode: 'unrestricted'`, so addresses a person entered may be private.
+ * Level 17 adds members' platform account ids (`members.platformUserId`) to the member summaries an extension sees.
  */
-export const EXTENSION_SDK_LEVEL = 16
+export const EXTENSION_SDK_LEVEL = 17
+
+/** `members: { platformUserId: true }` needs this level. */
+export const EXTENSION_MEMBER_PLATFORM_ID_SDK_LEVEL = 17
 
 /** `network: { mode: 'unrestricted', fields }` needs this level. */
 export const EXTENSION_UNRESTRICTED_FIELDS_SDK_LEVEL = 16
@@ -59,6 +63,7 @@ export const EXTENSION_SDK_RELEASES: readonly { readonly level: number; readonly
   { level: 14, version: '0.8.0' },
   { level: 15, version: '0.8.1' },
   { level: 16, version: '0.10.0' },
+  { level: 17, version: '0.11.0' },
 ]
 
 /** The oldest NekroNXT version that supports `level`; undefined for a level no release supports yet. */
@@ -300,6 +305,13 @@ export const ExtensionToolImagesCapabilitySchema = z.object({ highDetail: z.lite
 export type ExtensionToolImagesCapability = z.output<typeof ExtensionToolImagesCapabilitySchema>
 
 /**
+ * `platformUserId`: member summaries handed to the extension (call context, history, member lookups, inbound hooks)
+ * carry the member's account id on the platform, such as a QQ number. Without it the field is absent.
+ */
+export const ExtensionMembersCapabilitySchema = z.object({ platformUserId: z.literal(true) }).strict()
+export type ExtensionMembersCapability = z.output<typeof ExtensionMembersCapabilitySchema>
+
+/**
  * Add-ons (附加功能) whose capability an extension can use. The ids match `AddonIdSchema` in host-api; they are
  * repeated here so manifests validate without it.
  */
@@ -528,6 +540,7 @@ export const ExtensionCapabilitiesSchema = z
       .object({ read: z.literal(true) })
       .strict()
       .optional(),
+    members: ExtensionMembersCapabilitySchema.optional(),
     inboundHook: ExtensionInboundHookCapabilitySchema.optional(),
     outbound: ExtensionOutboundCapabilitySchema.optional(),
     jobs: ExtensionJobsCapabilitySchema.optional(),
@@ -664,6 +677,7 @@ export const extensionCapabilitiesExpand = (
     return true
   }
   if (next.history !== undefined && previous?.history === undefined) return true
+  if (next.members !== undefined && previous?.members === undefined) return true
   const platformKey = ({ adapter, action }: { readonly adapter: string; readonly action: string }) =>
     `${adapter}:${action}`
   const previousActions = new Set((previous?.platform?.actions ?? []).map(platformKey))
@@ -861,6 +875,13 @@ export const summarizeExtensionCapabilities = (
   }
   if (capabilities.history !== undefined)
     items.push({ key: 'history', risk: 'normal', label: '读取当前频道的聊天记录' })
+  if (capabilities.members !== undefined)
+    items.push({
+      key: 'members.platformUserId',
+      risk: 'sensitive',
+      label: '查看频道成员的平台账号',
+      detail: '成员在所在平台上的账号 ID',
+    })
   const hook = capabilities.inboundHook
   if (hook !== undefined) {
     const effects = [

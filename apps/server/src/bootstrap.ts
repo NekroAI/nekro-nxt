@@ -29,6 +29,7 @@ import {
   configSecretKeys,
   hostLayerAsCapabilities,
   parseJsonValue,
+  type ChannelMemberId,
   type JsonValue,
   DEFAULT_CHANNEL_CONTEXT_POLICY,
   DshNxtHostUiSchema,
@@ -745,6 +746,13 @@ export class NekroRuntime {
       const hostReference: { current?: DshHostRuntime } = {}
       const outboundReference: { current?: ExtensionOutboundProcessor } = {}
       const memberRelations = channelMemberRelations(core, repository, now)
+      const memberPlatformUserId = (memberId: ChannelMemberId): string | undefined => {
+        const channelId = repository.getChannelMember(memberId)?.channelId
+        const channel = channelId === undefined ? undefined : repository.getChannel(channelId)
+        return channel === undefined
+          ? undefined
+          : core.resolveChannelMemberIdentity(channel.connectionId, channel.id, memberId)?.platformUserId
+      }
       const channelPrompts = new ChannelPrompts(repository, now)
       // The library is prepared below, before any extension or command runs; facts reach it lazily.
       const credentialPort: { current?: CredentialLibrary } = {}
@@ -812,6 +820,7 @@ export class NekroRuntime {
         members: memberRelations,
         accountPlatformUserId: (connectionId) =>
           core.connectionAccountPlatformUserId(ConnectionIdSchema.parse(connectionId)),
+        memberPlatformUserId,
         turnTrigger: (episodeId) => {
           const parsed = EpisodeIdSchema.safeParse(episodeId)
           return parsed.success
@@ -1515,10 +1524,12 @@ export class NekroRuntime {
         ],
         describe: (handler) => extensionHost.describeRevision(handler.revision),
         nxtFor: (handler, channelId) => attachmentNxt(handler, ChannelIdSchema.parse(channelId)),
-        message: (event, defaultTriggered) => {
+        message: (event, defaultTriggered, detail) => {
           const channel = repository.getChannel(event.channelId)
           const senderId = event.senderMemberId
           const senderName = senderId === undefined ? undefined : repository.getChannelMember(senderId)?.displayName
+          const senderPlatformUserId =
+            senderId === undefined || !detail.platformUserId ? undefined : memberPlatformUserId(senderId)
           return {
             logicalMessageId: event.logicalMessageId,
             channel: {
@@ -1528,7 +1539,13 @@ export class NekroRuntime {
             },
             ...(senderId === undefined
               ? {}
-              : { sender: { memberId: senderId, ...(senderName === undefined ? {} : { displayName: senderName }) } }),
+              : {
+                  sender: {
+                    memberId: senderId,
+                    ...(senderName === undefined ? {} : { displayName: senderName }),
+                    ...(senderPlatformUserId === undefined ? {} : { platformUserId: senderPlatformUserId }),
+                  },
+                }),
             text: messagePartsText(nxtFacts, event.parts),
             images: event.parts.flatMap((part) =>
               part.type === 'image' ? [{ assetId: part.assetId, sticker: part.sticker === true }] : [],

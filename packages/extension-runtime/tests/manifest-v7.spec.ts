@@ -270,6 +270,12 @@ describe('Extension Manifest V7', () => {
       'permissions.agent.network.fields 只能引用 config.agent 中的文本字段',
     )
     expect(() => unrestricted(['agentUrl'], 15)).toThrow('requires: { sdk: 16 }')
+    const members = (sdk: number) =>
+      extensionManifestSchema.parse(
+        hostManifest({ requires: { sdk }, permissions: { agent: { members: { platformUserId: true } } } }),
+      )
+    expect(() => members(17)).not.toThrow()
+    expect(() => members(16)).toThrow('成员的平台账号，需要在清单中声明 requires: { sdk: 17 }')
     expect(() =>
       extensionManifestSchema.parse(hostManifest({ permissions: { capabilities: { history: { read: true } } } })),
     ).toThrow('capabilities')
