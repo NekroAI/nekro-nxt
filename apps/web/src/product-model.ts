@@ -155,6 +155,8 @@ export interface ModelSummary {
     readonly efforts: readonly { readonly id: string; readonly name: string }[]
     readonly defaultEffort?: string
   }
+  /** How the route sends the images already in a conversation; absent from older hosts. */
+  readonly requestImages?: 'uploaded' | 'resent' | 'unknown'
 }
 
 export interface ChannelSummary {

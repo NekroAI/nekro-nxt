@@ -2494,6 +2494,46 @@ test.describe('NekroNxt browser projections', () => {
     )
   })
 
+  test('suggests an image limit for a new agent by the main model it picks', async () => {
+    const snapshot = {
+      ...browserSnapshot,
+      models: [
+        {
+          provider: 'openai',
+          providerName: 'OpenAI',
+          id: 'gpt-5',
+          name: 'GPT-5',
+          inputModalities: ['text', 'image'],
+          requestImages: 'resent',
+        },
+        {
+          provider: 'deepseek',
+          providerName: 'DeepSeek',
+          id: 'deepseek-v4',
+          name: 'DeepSeek V4',
+          inputModalities: ['text', 'image'],
+          requestImages: 'uploaded',
+        },
+      ],
+    }
+    await withProductPage(
+      '/agents/new',
+      async (page) => {
+        const limit = page.getByRole('combobox', { name: '单次请求图片上限', exact: true })
+        await playwrightExpect(limit).toHaveText('不限制')
+        const hint = page.getByText('建议设为 12 张')
+        await playwrightExpect(hint).toBeVisible()
+        await limit.scrollIntoViewIfNeeded()
+        await page.screenshot({ path: '.local/screenshots/agent-create-request-image-limit-1440.png' })
+        await page.getByRole('combobox', { name: '主模型', exact: true }).click()
+        await page.getByRole('option', { name: 'DeepSeek · DeepSeek V4', exact: true }).click()
+        await playwrightExpect(limit).toHaveText('不限制')
+        await playwrightExpect(hint).toHaveCount(0)
+      },
+      snapshot,
+    )
+  })
+
   test('limits the images one request carries and suggests a limit where every image is sent again', async () => {
     const visionSnapshot = (requestImages: 'uploaded' | 'resent' | 'unknown') => ({
       ...browserSnapshot,

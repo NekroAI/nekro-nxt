@@ -504,6 +504,19 @@ export class HostQueries {
       optionalProjection(() => runtime.host.listAvailableLlmModels(), []),
       runtime.notifications.getSettings(),
     ])
+    const transports = new Map<string, ReturnType<typeof runtime.host.requestImageTransport>>()
+    const requestImagesByProvider = (provider: string) => {
+      let transport = transports.get(provider)
+      if (transport === undefined) {
+        try {
+          transport = runtime.host.requestImageTransport(provider)
+        } catch {
+          transport = 'unknown'
+        }
+        transports.set(provider, transport)
+      }
+      return transport
+    }
     const diagnosticsSampledAt = Date.now()
     const diagnosticsByRevision = new Map(diagnostics.map((item) => [item.revisionId, item.value]))
     // No await below: domain facts and the event cursor belong to one capture.
@@ -699,7 +712,8 @@ export class HostQueries {
         diagnostics: [...runtime.host.compatibilityDiagnostics(), ...runtime.compatibility.listCurrent()],
       },
       productMetadata,
-      models,
+      // Read per provider: the agent page suggests an image limit for the model a draft picks, saved or not.
+      models: models.map((model) => ({ ...model, requestImages: requestImagesByProvider(model.provider) })),
       capabilityAvailability: {
         subagents: { available: true },
         codeRun: { available: addonUsable('node') },

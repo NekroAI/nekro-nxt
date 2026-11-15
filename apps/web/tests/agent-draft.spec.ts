@@ -15,6 +15,7 @@ import { changeSummary, savedAt } from '../src/app/agents/agent-restore.js'
 import { subConversationModelsProblem } from '../src/app/agents/sub-conversation-models.js'
 import { fallbackModelsProblem } from '../src/app/agents/fallback-models.js'
 import { defaultImageUnderstandingPolicy } from '../src/product-model.js'
+import { draftRequestImages } from '../src/app/agents/image-restore.js'
 
 const base: AgentDraft = {
   name: '资料员',
@@ -112,6 +113,32 @@ describe('agent draft', () => {
     expect(limited.history.maxRequestImages).toBe(12)
     const cleared = withImageRestore(limited, edited.imageRestore, undefined)
     expect('maxRequestImages' in cleared.history).toBe(false)
+  })
+
+  it('judges the image route of the model a draft picks, with recent requests only for the saved model', () => {
+    const relay = { provider: 'relay', id: 'vision', requestImages: 'resent' as const }
+    const official = { provider: 'deepseek', id: 'deepseek-v4', requestImages: 'uploaded' as const }
+    // A new agent: only the kind of route.
+    expect(draftRequestImages(relay, undefined)).toBe('resent')
+    expect(draftRequestImages(official, undefined)).toBe('uploaded')
+    const saved = (requestImages: 'uploaded' | 'resent') => ({
+      modelRef: { provider: 'deepseek', model: 'deepseek-v4' },
+      imageDiagnostics: {
+        route: { mode: 'direct' as const },
+        activeSessions: 1,
+        residentImages: 0,
+        duplicateImagesSkipped: 0,
+        blockers: [],
+        requestImages,
+      },
+    })
+    // The saved model fell back to sending every image again: that counts while the draft keeps it.
+    expect(draftRequestImages(official, saved('resent'))).toBe('resent')
+    expect(draftRequestImages(official, saved('uploaded'))).toBe('uploaded')
+    // A different model in the draft is judged on its own route.
+    expect(draftRequestImages(relay, saved('uploaded'))).toBe('resent')
+    expect(draftRequestImages({ ...official, id: 'deepseek-v4-pro' }, saved('resent'))).toBe('uploaded')
+    expect(draftRequestImages({ provider: 'old', id: 'model' }, undefined)).toBeUndefined()
   })
 
   it('saves sub-conversation models with the identity, trimmed, and keeps the default on its candidate', () => {

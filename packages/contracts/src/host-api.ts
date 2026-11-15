@@ -2043,6 +2043,12 @@ export const HostSnapshotSchema = z
             })
             .strict()
             .optional(),
+          /**
+           * How this model's route sends the images already in a conversation, from its kind of route: `uploaded`
+           * reuses uploaded files, `resent` sends every image again with each request, `unknown` when that cannot be
+           * told in advance. Read-only; absent from older hosts.
+           */
+          requestImages: z.enum(['uploaded', 'resent', 'unknown']).optional(),
         })
         .strict(),
     ),

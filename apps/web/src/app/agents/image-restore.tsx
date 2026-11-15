@@ -1,3 +1,4 @@
+import type { AgentSummary, ModelSummary } from '../../product-model.js'
 import type { DraftUpdate, ImageRestorePolicy } from './agent-draft.js'
 import { PropertyRow, Select } from '../../ui-kit/index.js'
 import styles from './image-restore.module.css'
@@ -62,8 +63,24 @@ const REQUEST_IMAGE_LIMITS = [6, 8, 12, 16, 24, 32]
 /** What the hint suggests for routes that send every image again with each reply. */
 export const SUGGESTED_REQUEST_IMAGES = 12
 
-/** How the saved main model sends images already in the conversation, as the host reports it. */
+/** How a main model sends images already in the conversation, as the host reports it. */
 export type RequestImageTransport = 'uploaded' | 'resent' | 'unknown'
+
+/**
+ * How the draft's main model sends images: its kind of route, and, while it is still the saved main model, also
+ * whether a recent request had to send every image again anyway.
+ */
+export const draftRequestImages = (
+  model: Pick<ModelSummary, 'provider' | 'id' | 'requestImages'>,
+  agent: Pick<AgentSummary, 'modelRef' | 'imageDiagnostics'> | undefined,
+): RequestImageTransport | undefined => {
+  const saved =
+    agent?.modelRef?.provider === model.provider && agent.modelRef.model === model.id
+      ? agent.imageDiagnostics?.requestImages
+      : undefined
+  // The saved model's report already folds the route together with what its recent requests did.
+  return saved ?? model.requestImages
+}
 
 /**
  * The most images one reply sends to the model. Routes that cannot reuse uploaded files send every image again with
@@ -76,7 +93,7 @@ export function RequestImageLimitRow({
   update,
 }: {
   readonly value: number | undefined
-  /** Undefined when the host does not say, or the draft's main model is not the saved one. */
+  /** Undefined when the host does not say. */
   readonly transport: RequestImageTransport | undefined
   readonly update: DraftUpdate
 }) {

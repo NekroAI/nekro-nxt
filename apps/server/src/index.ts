@@ -38,7 +38,7 @@ import { mountSandboxHints } from './command-sandbox-hints.js'
 import { preloadCredentialDocument } from './logs/credentials.js'
 import { SecretRegistry } from './secret-registry.js'
 import { mountSessionEventHistory, sessionEvents } from './session-event-history.js'
-import { REQUEST_IMAGE_BYTE_LIMIT, type RequestImageLimits } from './request-image-limit.js'
+import { REQUEST_IMAGE_BYTE_LIMIT, type RequestImageLimits, type RequestImageTransport } from './request-image-limit.js'
 import { mountRequestTiming } from './request-timing.js'
 import { NekroNxtSessionWorkingDirectory } from './session-working-directory.js'
 import { mountCodeRunRuntime } from './code-run.js'
@@ -4090,6 +4090,11 @@ export class DshHostRuntime implements AgentSessionDriver {
       ),
     )
     return models.filter((model) => !unselected.has(model.provider))
+  }
+  /** How a provider's route sends the images already in a conversation, judged from its kind of route alone. */
+  requestImageTransport(provider: string): RequestImageTransport {
+    this.#assertActive()
+    return this.#imageContext.requestImageTransport(provider, [])
   }
   getAgentImageDiagnostics(revision: AgentRevisionRecord): Promise<AgentImageDiagnostics> {
     this.#assertActive()

@@ -450,6 +450,8 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(snapshot.models.find((model) => model.id === 'chat-model')).toMatchObject({
         provider: 'test-provider',
         name: 'Chat model',
+        // A provider registered outside the configurable catalog: how it sends images cannot be told.
+        requestImages: 'unknown',
       })
       expect(
         snapshot.connectionAdapters.some(

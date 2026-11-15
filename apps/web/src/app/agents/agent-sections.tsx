@@ -67,7 +67,7 @@ import styles from './agents.module.css'
 import { EffortSlider } from './effort-slider.js'
 import { CompactionModelField, type CompactionModel } from './compaction-model.js'
 import { CompactionThresholdSlider } from './compaction-threshold.js'
-import { ImageRestoreRow, RequestImageLimitRow } from './image-restore.js'
+import { ImageRestoreRow, RequestImageLimitRow, draftRequestImages } from './image-restore.js'
 import { SubConversationModelRows } from './sub-conversation-models.js'
 import { FallbackModelRows } from './fallback-models.js'
 
@@ -265,7 +265,7 @@ export function ModelSection({
         {model && supportsImages(model) ? (
           <RequestImageLimitRow
             value={draft.maxRequestImages}
-            transport={agent?.modelRef?.provider === model.provider ? agent.imageDiagnostics?.requestImages : undefined}
+            transport={draftRequestImages(model, agent)}
             update={update}
           />
         ) : null}
