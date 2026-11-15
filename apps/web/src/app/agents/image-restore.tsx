@@ -61,7 +61,7 @@ export function ImageRestoreRow({
 
 const REQUEST_IMAGE_LIMITS = [6, 8, 12, 16, 24, 32]
 /** What the hint suggests for routes that send every image again with each reply. */
-export const SUGGESTED_REQUEST_IMAGES = 12
+export const SUGGESTED_REQUEST_IMAGES = 8
 
 /** How a main model sends images already in the conversation, as the host reports it. */
 export type RequestImageTransport = 'uploaded' | 'resent' | 'unknown'

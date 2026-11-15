@@ -2521,7 +2521,7 @@ test.describe('NekroNxt browser projections', () => {
       async (page) => {
         const limit = page.getByRole('combobox', { name: '单次请求图片上限', exact: true })
         await playwrightExpect(limit).toHaveText('不限制')
-        const hint = page.getByText('建议设为 12 张')
+        const hint = page.getByText('建议设为 8 张')
         await playwrightExpect(hint).toBeVisible()
         await limit.scrollIntoViewIfNeeded()
         await page.screenshot({ path: '.local/screenshots/agent-create-request-image-limit-1440.png' })
@@ -2552,7 +2552,7 @@ test.describe('NekroNxt browser projections', () => {
           : agent,
       ),
     })
-    const hint = '当前主模型每次回复都要重新发送全部图片，图片多时回复会变慢，建议设为 12 张。'
+    const hint = '当前主模型每次回复都要重新发送全部图片，图片多时回复会变慢，建议设为 8 张。'
     let revised: unknown
     await withProductPage(
       `/agents/${browserAgentId}`,
@@ -2574,7 +2574,7 @@ test.describe('NekroNxt browser projections', () => {
         ]) {
           await playwrightExpect(page.getByRole('option', { name: label, exact: true })).toBeVisible()
         }
-        await page.getByRole('option', { name: '最多 12 张', exact: true }).click()
+        await page.getByRole('option', { name: '最多 8 张', exact: true }).click()
         await playwrightExpect(page.getByText(hint)).toHaveCount(0)
         await limit.scrollIntoViewIfNeeded()
         await page.screenshot({ path: '.local/screenshots/agent-request-image-limit-1440.png' })
@@ -2583,7 +2583,7 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect
           .poll(() => revised)
           .toMatchObject({
-            imagePolicy: { history: { maxRequestImages: 12, restoreAfterCompaction: { maxImages: 20 } } },
+            imagePolicy: { history: { maxRequestImages: 8, restoreAfterCompaction: { maxImages: 20 } } },
           })
       },
       visionSnapshot('resent'),
@@ -2601,7 +2601,7 @@ test.describe('NekroNxt browser projections', () => {
         await playwrightExpect(page.getByRole('combobox', { name: '单次请求图片上限', exact: true })).toHaveText(
           '不限制',
         )
-        await playwrightExpect(page.getByText('建议设为 12 张')).toHaveCount(0)
+        await playwrightExpect(page.getByText('建议设为 8 张')).toHaveCount(0)
       },
       visionSnapshot('uploaded'),
     )
