@@ -533,6 +533,13 @@ const acquireUpgradeFileLock = async (backupRoot: string, releaseId: string): Pr
   throw new Error('Cannot acquire the upgrade lock.')
 }
 
+/**
+ * The upgrade failed before its first migration step: preflight and backup only read the data root, so the next
+ * start may try again by itself. Without this, a full disk that the operator has since cleaned would keep the Host
+ * in recovery until someone adds --retry-upgrade.
+ */
+class UpgradeNotStartedError extends Error {}
+
 const createRuntimeThroughUpgradeCoordinator = async (
   dataRoot: string,
   releaseId: string,
@@ -547,6 +554,7 @@ const createRuntimeThroughUpgradeCoordinator = async (
   let runtime: NekroRuntime | undefined
   let sourceRuntimeFingerprint: string | undefined
   const journal = await createServerUpgradeJournal(backupRoot, releaseId, () => backupId)
+  let migrationBegan = false
   const { policy: backupPolicy } = await readUpgradeBackupPolicy(dataRoot)
   const storeDirectory = upgradeBackupStore(backupPolicy)
   const progress = createUpgradeProgress(dataRoot, releaseId)
@@ -628,7 +636,13 @@ const createRuntimeThroughUpgradeCoordinator = async (
         },
       },
     ],
-    journal,
+    journal: {
+      ...journal,
+      begin: (id) => {
+        migrationBegan = true
+        return journal.begin(id)
+      },
+    },
     ...(signal === undefined ? {} : { signal }),
   })
   const offProgress = coordinator.subscribe(() => {
@@ -644,7 +658,7 @@ const createRuntimeThroughUpgradeCoordinator = async (
   if (status.phase !== 'ready' || !runtime) {
     const summary = status.errorSummary ?? 'Upgrade did not reach ready.'
     await journal.finish('recovery', summary)
-    throw new Error(`升级失败：${summary}`)
+    throw new (migrationBegan ? Error : UpgradeNotStartedError)(`升级失败：${summary}`)
   }
   await journal.finish('ready')
   if (backupPolicy.mode !== 'off') {
@@ -1037,7 +1051,7 @@ export const startNekroServer = async (options: StartServerOptions): Promise<Nek
       resolveRoot(options.dataRoot),
       parseReleaseId(options.releaseId),
       error instanceof Error ? error.message.slice(0, 512) : '启动失败。',
-      options.signal?.aborted === true,
+      options.signal?.aborted === true || error instanceof UpgradeNotStartedError,
     ).catch((failure: unknown) => {
       progressFailure = failure
     })

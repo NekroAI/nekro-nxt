@@ -8,6 +8,13 @@ import { NekroRuntime } from '../src/bootstrap.js'
 import { startNekroServer } from '../src/main.js'
 import { acquireDataRootLease } from '../src/data-root-lease.js'
 import { HostApiContracts } from '@nekro-nxt/contracts'
+import type * as UpgradeBackup from '../src/upgrade-backup.js'
+import { createUpgradeBackup } from '../src/upgrade-backup.js'
+
+vi.mock('../src/upgrade-backup.js', async (importOriginal) => {
+  const original = await importOriginal<typeof UpgradeBackup>()
+  return { ...original, createUpgradeBackup: vi.fn(original.createUpgradeBackup) }
+})
 
 const roots: string[] = []
 afterEach(async () => {
@@ -82,6 +89,30 @@ describe('upgrade startup and teardown boundaries', () => {
       expect((await fetch(`http://127.0.0.1:${retried.port}/api/snapshot`)).status).toBe(401)
     } finally {
       await retried.stop()
+    }
+  }, 30_000)
+
+  it('tries again by itself after a failure before any migration step, such as a full disk', async () => {
+    const options = {
+      ...(await fixture()),
+      serveRecovery: true,
+      releaseId: 'synthetic-disk-full-release',
+      managementKey: 'synthetic-recovery-management-key-0002',
+    }
+    vi.mocked(createUpgradeBackup).mockRejectedValueOnce(new Error('磁盘空间不足，未修改原始数据。'))
+    const first = await startNekroServer(options)
+    try {
+      expect(first.recovery).toBe(true)
+    } finally {
+      await first.stop()
+    }
+    // The operator freed space and restarted with the same command.
+    const second = await startNekroServer(options)
+    try {
+      expect(second.recovery).not.toBe(true)
+      expect((await fetch(`http://127.0.0.1:${second.port}/health/ready`)).status).toBe(200)
+    } finally {
+      await second.stop()
     }
   }, 30_000)
 
