@@ -3,6 +3,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Cron } from 'croner'
 import { createHmac, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { parseFeed, parseHtml, renderSvg } from './extension-render-parse.js'
 import {
@@ -66,6 +68,7 @@ import {
 } from './extension-files.js'
 import type { CommandArgument, CommandProfiles } from './command-profiles.js'
 import type { AudioFormat, ConvertFormat, MediaToolkit } from './media-toolkit.js'
+import { WorkFolderAccessError } from './confined-program.js'
 import type { SpeechService } from './speech-service.js'
 
 /** Service name extensions declare in `inject`. Not a DSH private Service, so isolation never hides it. */
@@ -764,6 +767,8 @@ const resolveInput = async (
 /**
  * Runs `work` in a fresh work folder of the extension and turns the files it reports into temporary work files of the
  * extension (counted against its temp quota). If importing fails part way, the files already imported are removed.
+ * Where the Windows sandbox cannot grant the work folder under the data root, the call runs once more in the system
+ * temp folder; its outputs are then copied rather than moved into the extension's files.
  */
 const withOutputs = async <Result>(
   binding: NxtServiceBinding,
@@ -774,19 +779,27 @@ const withOutputs = async <Result>(
   ) => Promise<Result>,
 ): Promise<Result> => {
   const quota = filesQuota(binding)
-  const folder = await backends.files.workDirectory(binding.ownerKey)
-  const kept: string[] = []
+  const attempt = async (folder: { readonly path: string; dispose(): Promise<void> }): Promise<Result> => {
+    const kept: string[] = []
+    try {
+      return await work(folder.path, async (hostPath, mediaType) => {
+        const file = await backends.files.importPath(binding.ownerKey, hostPath, { mediaType, move: true }, quota)
+        kept.push(file.fileId)
+        return { fileId: file.fileId, byteSize: file.byteSize }
+      })
+    } catch (error) {
+      await Promise.all(kept.map((fileId) => backends.files.delete(binding.ownerKey, fileId)))
+      throw error
+    } finally {
+      await folder.dispose()
+    }
+  }
   try {
-    return await work(folder.path, async (hostPath, mediaType) => {
-      const file = await backends.files.importPath(binding.ownerKey, hostPath, { mediaType, move: true }, quota)
-      kept.push(file.fileId)
-      return { fileId: file.fileId, byteSize: file.byteSize }
-    })
+    return await attempt(await backends.files.workDirectory(binding.ownerKey))
   } catch (error) {
-    await Promise.all(kept.map((fileId) => backends.files.delete(binding.ownerKey, fileId)))
-    throw error
-  } finally {
-    await folder.dispose()
+    if (!(error instanceof WorkFolderAccessError)) throw error
+    const fallback = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-work-'))
+    return await attempt({ path: fallback, dispose: () => rm(fallback, { recursive: true, force: true }) })
   }
 }
 

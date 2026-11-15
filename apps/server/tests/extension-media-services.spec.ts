@@ -8,7 +8,7 @@ import { ExtensionIdSchema, type ExtensionCapabilities } from '@nekro-nxt/contra
 import { AssetService, CoreService } from '@nekro-nxt/core'
 import { localExtensions, openMigratedCoreDatabase, SqliteCoreRepository } from '@nekro-nxt/storage-sqlite'
 import { CommandProfileError, CommandProfiles, FFMPEG_PROFILE, FFPROBE_PROFILE } from '../src/command-profiles.js'
-import { ConfinedProgramRunner, createProgramSandbox } from '../src/confined-program.js'
+import { ConfinedProgramRunner, createProgramSandbox, WorkFolderAccessError } from '../src/confined-program.js'
 import { ExtensionFileStore } from '../src/extension-files.js'
 import {
   createHostLayerNxt,
@@ -152,6 +152,58 @@ describe('nxt.media', () => {
     expect(audio).toMatchObject({ format: 'wav', sampleRate: 16000, channels: 1 })
     expect(Buffer.from((await nxt.files.read(audio.fileId)).base64, 'base64').toString()).toBe('RIFF')
     expect(await workFolders()).toEqual([])
+  })
+
+  it('runs once more in the system temp folder when the sandbox cannot grant the work folder', async () => {
+    const media = fakeMedia()
+    const frames = media.frames
+    const folders: string[] = []
+    media.frames = vi.fn(async (input: string, options: never, outDir: string) => {
+      folders.push(outDir)
+      // On a data root where the user has only Modify, the runner fails before ffmpeg starts.
+      if (folders.length === 1) throw new WorkFolderAccessError()
+      return frames(input, options, outDir)
+    })
+    const { backends, binding, roomA, inChannel, workFolders } = await setup({ media })
+    const asset = await inChannel(new TextEncoder().encode('示例视频'), roomA.id)
+    const nxt = createNxtHostService(
+      binding(roomA.id, { media: true, files: { tempQuotaBytes: 4 * MiB, cacheQuotaBytes: MiB } }),
+      backends,
+    )
+    const taken = await nxt.media.frames({ assetId: asset.id }, { at: [0.5, 1.5], format: 'jpeg' })
+    expect(taken).toHaveLength(2)
+    expect(await nxt.files.stat(taken[0]!.fileId)).toMatchObject({ mediaType: 'image/jpeg', kind: 'temp' })
+    expect(path.relative(realpathSync(tmpdir()), realpathSync(path.dirname(folders[1]!)))).toBe('')
+    await expect(stat(folders[1]!)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await workFolders()).toEqual([])
+  })
+
+  it('reports a work folder the sandbox cannot grant instead of the runner’s Win32 error', async () => {
+    const runner = new ConfinedProgramRunner({
+      sandbox: {
+        // The Windows runner's own failure before it starts the program.
+        confine: () =>
+          Promise.resolve({
+            argv: [
+              process.execPath,
+              '-e',
+              "process.stderr.write('windows-acl-run: SetNamedSecurityInfoW failed (Win32 5): grantWrite(work-0)\\n'); process.exit(127)",
+            ],
+            enforcement: 'partial',
+            denialSignatures: [],
+            runnerFailureRules: [],
+          }),
+      },
+      confinement: { hidden: [], readable: [] },
+    })
+    const cwd = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-grant-'))
+    try {
+      await expect(runner.run({ executable: process.execPath, args: [], cwd, timeoutMs: 10_000 })).rejects.toThrow(
+        WorkFolderAccessError,
+      )
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   it('needs the declaration, the files declaration for outputs and a visible input', async () => {

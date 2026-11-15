@@ -42,6 +42,19 @@ export interface ConfinedProgramResult {
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024
 
 /**
+ * The Windows runner could not make `cwd` writable for the program: it sets the folder's DACL and a Low integrity
+ * label at once, and the label needs WRITE_OWNER on the folder. A user who has only 修改 (Modify) there, as on a
+ * secondary drive whose root grants Authenticated Users Modify, gets Win32 5 before the program starts.
+ */
+export class WorkFolderAccessError extends Error {
+  constructor() {
+    super('当前用户对工作文件夹所在的目录没有「完全控制」权限（只有「修改」不够），命令沙箱无法授权，程序没有运行。')
+  }
+}
+
+const WORK_FOLDER_GRANT_DENIED = /SetNamedSecurityInfoW failed \(Win32 5\): grantWrite\(/u
+
+/**
  * The variables a program needs to start; nothing of the server's own environment otherwise reaches it.
  * `ELECTRON_RUN_AS_NODE` stays: the Windows runner is a script started with `process.execPath`, which in the desktop
  * app is the Electron binary and otherwise starts a second app instance that exits 0 with no output.
@@ -150,10 +163,15 @@ export const runConfinedProgram = async (
         reject(abortReason(request.signal))
         return
       }
+      const text = Buffer.concat(stderr).toString('utf8')
+      if (code !== 0 && level !== 'none' && WORK_FOLDER_GRANT_DENIED.test(text)) {
+        reject(new WorkFolderAccessError())
+        return
+      }
       resolve({
         exitCode: code,
         stdout: Buffer.concat(stdout),
-        stderr: Buffer.concat(stderr).toString('utf8'),
+        stderr: text,
         truncated,
         timedOut,
         confinement: level,
