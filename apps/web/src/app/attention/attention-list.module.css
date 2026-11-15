@@ -62,11 +62,19 @@
 }
 
 .help {
+  position: relative;
   justify-self: start;
   color: var(--accent);
   font: var(--t-note);
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+
+/* One line of note text is too short for a fingertip; the hit area grows to --target, the line keeps its size. */
+.help::after {
+  content: '';
+  position: absolute;
+  inset: min(0px, calc((100% - var(--target)) / 2)) -8px;
 }
 
 /* Popover: narrower rows, the title and reason wrap instead of pushing the action out. */

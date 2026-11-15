@@ -177,7 +177,7 @@ const dragTo = async (page: Page, source: Locator, target: Locator): Promise<voi
   await page.mouse.move(8, 8)
 }
 
-const attentionItem = (id: string, severity: 'critical' | 'warning', title: string) => ({
+const attentionItem = (id: string, severity: 'critical' | 'warning', title: string, help?: string) => ({
   id,
   kind: severity === 'critical' ? 'connection-unhealthy' : 'turn-failed',
   severity,
@@ -186,6 +186,7 @@ const attentionItem = (id: string, severity: 'critical' | 'warning', title: stri
   title,
   detail: '示例说明',
   action: { kind: 'open-connection', label: '查看' },
+  ...(help === undefined ? {} : { help }),
   occurredAt: 1_725_000_000_000,
 })
 
@@ -935,6 +936,23 @@ test.describe('shell, channels and live', () => {
       } finally {
         await page.close()
       }
+    }
+  })
+
+  test('on a touch phone the attention list’s controls, its help link included, answer a 40px fingertip', async () => {
+    const { page } = await open('/live', {
+      width: 393,
+      touch: true,
+      attention: [attentionItem('att-bad', 'critical', '一处故障', 'https://nxt.nekro.ai/docs/guide/troubleshooting')],
+    })
+    try {
+      await page.getByRole('button', { name: '1 项需要关注' }).click()
+      const panel = page.getByRole('dialog', { name: '需要关注' })
+      await expect(panel.getByRole('link', { name: '怎么处理' })).toBeVisible()
+      await page.waitForTimeout(300)
+      expect(await missedTargets(page)).toEqual([])
+    } finally {
+      await page.close()
     }
   })
 
