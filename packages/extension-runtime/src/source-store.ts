@@ -11,7 +11,12 @@ const getNodeErrorCode = (error: unknown): string | undefined => {
 }
 
 const assertRelativeStoragePath = (value: string): void => {
-  if (value.length === 0 || path.isAbsolute(value) || value.split(path.sep).includes('..')) {
+  if (
+    value.length === 0 ||
+    path.posix.isAbsolute(value) ||
+    path.win32.isAbsolute(value) ||
+    value.split(/[\\/]/u).includes('..')
+  ) {
     throw new TypeError(`Unsafe Extension storage path: ${value}`)
   }
 }

@@ -11,13 +11,13 @@ import {
 import { ExtensionRevisionIdSchema, type ExtensionId, type ExtensionRevisionId } from '@nekro-nxt/contracts'
 import { EXTENSION_SDK_BUNDLE_SOURCE } from '@nekro-nxt/extension-sdk'
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { build, type Plugin } from 'esbuild'
 import { z } from 'zod'
 import type { ExtensionBuildArtifact } from './types.js'
 
-const BUILDER_VERSION = 'nekro-nxt-esbuild-v5'
+const BUILDER_VERSION = 'nekro-nxt-esbuild-v6'
 
 const getNodeErrorCode = (error: unknown): string | undefined => {
   if (!(error instanceof Error) || !('code' in error) || typeof error.code !== 'string') return undefined
@@ -37,25 +37,40 @@ const extensionBuildCacheSchema = z
     message: 'Extension build cache has no artifact entrypoint.',
   })
 
-const importPolicy: Plugin = {
+/** Check resolved files as well as import spelling, including links inside a Revision. */
+const revisionFile = async (root: string, file: string): Promise<string> => {
+  const resolved = await realpath(file)
+  const relative = path.relative(root, resolved)
+  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error('Extension file is outside the Revision root.')
+  }
+  return resolved
+}
+
+const importPolicy = (sourceRoot: string): Plugin => ({
   name: 'nekro-nxt-extension-import-policy',
   setup(buildContext) {
-    buildContext.onResolve({ filter: /^[^./]|^@/ }, (args) => {
-      // esbuild presents a Windows entry as C:\..., which also matches the bare
-      // import filter. Only the Builder-selected entry bypasses this check;
+    buildContext.onResolve({ filter: /.*/ }, (args) => {
+      // esbuild presents a Windows entry as C:\.... Only the Builder-selected
+      // entry bypasses the import spelling check;
       // absolute imports written inside extension source remain forbidden.
       if (args.kind === 'entry-point' && path.isAbsolute(args.path)) return undefined
       if (args.path === '@nekro-nxt/extension-sdk') return { path: args.path, namespace: 'nekro-nxt-sdk' }
+      if (args.path.startsWith('./') || args.path.startsWith('../')) return undefined
       return { errors: [{ text: `Extension import is not allowed: ${args.path}` }] }
+    })
+    buildContext.onLoad({ filter: /.*/, namespace: 'file' }, async (args) => {
+      await revisionFile(sourceRoot, args.path)
+      return undefined
     })
     buildContext.onLoad({ filter: /.*/, namespace: 'nekro-nxt-sdk' }, () => ({
       contents: EXTENSION_SDK_BUNDLE_SOURCE,
       loader: 'js',
     }))
   },
-}
+})
 
-const dynamicClientCss: Plugin = {
+const dynamicClientCss = (sourceRoot: string): Plugin => ({
   name: 'nekro-nxt-dynamic-client-css',
   setup(buildContext) {
     buildContext.onResolve({ filter: /\?nxt-dynamic-css$/ }, (args) => ({
@@ -63,11 +78,11 @@ const dynamicClientCss: Plugin = {
       namespace: 'nekro-nxt-dynamic-css',
     }))
     buildContext.onLoad({ filter: /.*/, namespace: 'nekro-nxt-dynamic-css' }, async (args) => ({
-      contents: await readFile(args.path, 'utf8'),
+      contents: await readFile(await revisionFile(sourceRoot, args.path), 'utf8'),
       loader: 'css',
     }))
   },
-}
+})
 
 export class ExtensionBuilder {
   readonly #cacheRoot: string
@@ -93,10 +108,13 @@ export class ExtensionBuilder {
     readonly contentDigest: string
     readonly sourceDirectory: string
   }): Promise<ExtensionBuildArtifact> {
+    const sourceRoot = await realpath(input.sourceDirectory)
     const buildKey = this.buildKey(input.contentDigest)
     const directory = path.join(this.#cacheRoot, input.revisionId, buildKey)
     const manifestPath = path.join(directory, 'build.json')
-    const raw: unknown = JSON.parse(await readFile(path.join(input.sourceDirectory, 'manifest.json'), 'utf8'))
+    const raw: unknown = JSON.parse(
+      await readFile(await revisionFile(sourceRoot, path.join(sourceRoot, 'manifest.json')), 'utf8'),
+    )
     const manifest = extensionManifestSchema.parse(raw)
     if (manifest.revisionId !== input.revisionId) {
       throw new Error('Extension Manifest revision does not match build input.')
@@ -104,7 +122,7 @@ export class ExtensionBuilder {
     if (input.extensionId !== undefined && manifest.extensionId !== input.extensionId) {
       throw new Error('Extension Manifest identity does not match build input.')
     }
-    await this.#validateResources(input.sourceDirectory, manifest)
+    await this.#validateResources(sourceRoot, manifest)
     try {
       const cached = extensionBuildCacheSchema.parse(JSON.parse(await readFile(manifestPath, 'utf8')))
       if (
@@ -130,6 +148,7 @@ export class ExtensionBuilder {
               temporary,
               'host',
               'node',
+              sourceRoot,
             )
           : undefined
       const clientEntry =
@@ -139,6 +158,7 @@ export class ExtensionBuilder {
               temporary,
               'client',
               'browser',
+              sourceRoot,
             )
           : undefined
       const emittedClientCss = path.join(temporary, 'client.css')
@@ -239,6 +259,7 @@ export class ExtensionBuilder {
     outputDirectory: string,
     name: 'host' | 'client',
     platform: 'node' | 'browser',
+    sourceRoot: string,
   ): Promise<string> {
     if (!(await stat(entry)).isFile()) throw new Error(`Extension entrypoint is not a file: ${name}`)
     const outfile = path.join(outputDirectory, `${name}.mjs`)
@@ -251,7 +272,7 @@ export class ExtensionBuilder {
       target: platform === 'node' ? 'node22' : 'es2022',
       sourcemap: 'external',
       logLevel: 'silent',
-      plugins: [dynamicClientCss, importPolicy],
+      plugins: [importPolicy(sourceRoot), dynamicClientCss(sourceRoot)],
     })
     return outfile
   }
@@ -262,7 +283,7 @@ export class ExtensionBuilder {
       const relative = path.relative(sourceDirectory, resourcePath)
       if (relative.startsWith('..') || path.isAbsolute(relative))
         throw new Error('Host UI 资源路径越过 Revision 根目录。')
-      const source = resourceContent(relativePath, await readFile(resourcePath))
+      const source = resourceContent(relativePath, await readFile(await revisionFile(sourceDirectory, resourcePath)))
       if (resourceDigest(relativePath, source) !== descriptor.digest) {
         throw new Error(`Host UI 资源摘要不一致：${relativePath}`)
       }
