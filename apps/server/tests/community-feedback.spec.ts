@@ -290,6 +290,25 @@ const setup = async () => {
 }
 
 describe('feedback redaction', () => {
+  it('does not partially replace a home directory inside another absolute path', () => {
+    const context = { ...redaction, homeDirectory: '/opt/fixture', dataDirectory: '/opt/fixture/data' }
+    expect(redactFeedbackText('日志 /var/archive/opt/fixture/private.log', context)).toBe('日志 <本机路径>')
+    expect(
+      redactFeedbackText('日志 C:\\Users\\fixture\\private.log', { ...context, homeDirectory: '\\Users\\fixture' }),
+    ).toBe('日志 <本机路径>')
+  })
+  it.each([
+    { homeDirectory: '/opt/fixture', pathname: '/opt/fixture/private.log' },
+    { homeDirectory: 'C:\\Users\\fixture', pathname: 'C:\\Users\\fixture\\private.log' },
+  ])('redacts the complete absolute path after a colon: $pathname', ({ homeDirectory, pathname }) => {
+    const context = { ...redaction, homeDirectory }
+    expect(redactFeedbackText(`path:${pathname}`, context)).toBe('path:<本机路径>')
+  })
+  it('preserves an HTTP URL whose hostname resembles a local directory', () => {
+    const context = { ...redaction, homeDirectory: '/opt/fixture' }
+    const url = 'https://opt/fixture/private.log'
+    expect(redactFeedbackText(url, context)).toBe(url)
+  })
   it('uses one identity mapping across members, channel/account labels and paths', () => {
     const value = redactFeedbackText(
       `林舟（100001001）和叶晴在样例频道 200002001 使用样例账号，日志 ${fixtureData}/log.txt 与 ${fixtureHome}/other.txt。`,

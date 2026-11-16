@@ -81,7 +81,7 @@ it('serves the feedback journey through typed host routes, enforces consent and 
           kind: 'bug',
           target: 'nxt',
           title: '保存设置样例',
-          body: `路径在 ${path.join('/', 'Users', 'fixture', 'private', 'log.txt')}。`,
+          body: '路径在 /var/fixture/private/log.txt。',
         })
       ).json(),
     )
