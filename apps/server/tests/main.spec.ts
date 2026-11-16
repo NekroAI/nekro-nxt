@@ -98,7 +98,10 @@ const exerciseDevelopmentWorkspace = async (developmentWorkspaceRoot?: string) =
         { timeout: 5_000 },
       )
       .toBe(true)
-    expect((await stat(workspace)).mode & 0o777).toBe(0o700)
+    const workspaceMode = (await stat(workspace)).mode
+    // Windows exposes the writable attribute through mode, without POSIX group/other permissions.
+    if (process.platform === 'win32') expect(workspaceMode & 0o200).toBe(0o200)
+    else expect(workspaceMode & 0o777).toBe(0o700)
     return { dataRoot, workspace }
   } finally {
     await handle.stop()

@@ -33,10 +33,11 @@ afterEach(() => {
 const agent = AgentIdSchema.parse('agt_fixture')
 const grant = { service: 'github' as const, accountId: 'acc_fixture', usage: [] }
 
-/** A GitHub platform whose `gh` is on PATH for the environment tests. */
+/** A Linux GitHub platform whose `gh` is on PATH for the environment tests. */
 const githubPlatform = (options: { readonly cliAvailable?: boolean } = {}) =>
   createGithubPlatform({
     cli: { executable: () => (options.cliAvailable === false ? undefined : '/usr/bin/gh') },
+    platform: 'linux',
   })
 
 const githubAccount = (platform = githubPlatform(), usage: CommandAccountGrant['usage'] = []): CommandAccount => ({
@@ -108,17 +109,18 @@ describe('command credential environment', () => {
   })
 
   it('tells the agent which account it acts as, the usage hint as guidance, and each variable it has', () => {
-    expect(commandCredentialPrompt(agent, [grant], sources([], [githubAccount()]))).toBe(
+    expect(commandCredentialPrompt(agent, [grant], sources([], [githubAccount()]), 'linux')).toBe(
       '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。gh 操作仓库时用 -R 所有者/仓库 写明是哪个仓库；GH_TOKEN 和 GH_CONFIG_DIR 已经设好，不要改。',
     )
     const hinted = commandCredentialPrompt(
       agent,
       [grant],
       sources([], [githubAccount(githubPlatform(), ['issues', 'read'])]),
+      'linux',
     )
     expect(hinted).toContain('这个账号交给你的用途是：创建和评论 issue、查看仓库、issue 和 PR。')
     expect(hinted).toContain('先和管理员确认')
-    const both = commandCredentialPrompt(agent, [grant], sources([weather], [githubAccount()]))
+    const both = commandCredentialPrompt(agent, [grant], sources([weather], [githubAccount()]), 'linux')
     expect(both?.split('\n')).toEqual([
       '命令里的 GitHub 已用账号 octo-fixture 登录：gh 可以直接用，git 走 https 也会带上这个账号。gh 操作仓库时用 -R 所有者/仓库 写明是哪个仓库；GH_TOKEN 和 GH_CONFIG_DIR 已经设好，不要改。',
       '命令的环境变量 WEATHER_KEY 是凭据「天气服务」（示例天气接口），用 $WEATHER_KEY 引用，不要把它的值打印出来。',

@@ -6,7 +6,7 @@ import { createExtensionStorageRepository, ExtensionStorageQuotaError } from '..
 import { AgentIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../src/database.js'
 import { coreSchema } from '../src/schema.js'
-import path from 'path'
+import { fileURLToPath } from 'node:url'
 
 describe('Extension Storage Repository', () => {
   let db: DrizzleCoreDatabase
@@ -22,7 +22,7 @@ describe('Extension Storage Repository', () => {
     db = drizzle(sqlite, { schema: coreSchema })
 
     // Run migrations
-    const migrationsFolder = path.join(path.dirname(import.meta.url.replace('file://', '')), '../migrations')
+    const migrationsFolder = fileURLToPath(new URL('../migrations/', import.meta.url))
     migrate(db, { migrationsFolder })
 
     // Create test data

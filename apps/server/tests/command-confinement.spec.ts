@@ -26,8 +26,8 @@ afterEach(() => {
 })
 
 /** A fictional host: home with a private key and a toolchain, a data root with credentials and two workspaces. */
-const fixture = () => {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'nekro-nxt-confinement-')))
+const fixture = (base = tmpdir()) => {
+  const root = realpathSync(mkdtempSync(path.join(base, 'nekro-nxt-confinement-')))
   directories.push(root)
   const home = path.join(root, 'home')
   const data = path.join(home, 'nxt-data')
@@ -71,11 +71,11 @@ describe('command confinement', () => {
     const { home, workspace, confinement } = fixture()
     const rules = readRules(confinement, workspace)
     const closed = seatbeltForms(rules, false)
-    expect(closed).toContain(`(deny file-read* (subpath "${home}"))`)
-    expect(closed.indexOf(`(allow file-read* (subpath "${workspace}"))`)).toBeGreaterThan(
-      closed.indexOf(`(deny file-read* (subpath "${home}"))`),
+    expect(closed).toContain(`(deny file-read* (subpath ${JSON.stringify(home)}))`)
+    expect(closed.indexOf(`(allow file-read* (subpath ${JSON.stringify(workspace)}))`)).toBeGreaterThan(
+      closed.indexOf(`(deny file-read* (subpath ${JSON.stringify(home)}))`),
     )
-    expect(closed).toContain(`(allow file-read-metadata (literal "${home}")`)
+    expect(closed).toContain(`(allow file-read-metadata (literal ${JSON.stringify(home)})`)
     expect(closed).toContain('(allow signal (target same-sandbox))')
     expect(closed).toContain('(deny network-outbound (remote ip))')
     expect(seatbeltForms(rules, true)).not.toContain('(remote ip)')
@@ -96,7 +96,8 @@ describe('command confinement', () => {
   })
 
   it('grants Landlock reads for everything except hidden roots, following only safe symlinks', () => {
-    const { root, home, data, workspace, confinement } = fixture()
+    // Landlock enumerates the current volume; Windows may put the system temp directory on another one.
+    const { root, home, data, workspace, confinement } = fixture(process.cwd())
     symlinkSync(path.join(data, 'credentials'), path.join(root, 'credentials-link'))
     symlinkSync(path.join(home, '.nvm'), path.join(root, 'nvm-link'))
     const roots = landlockReadRoots(readRules(confinement, workspace))
@@ -104,19 +105,20 @@ describe('command confinement', () => {
     expect(roots).toContain(path.join(home, '.nvm'))
     expect(roots).toContain(path.join(root, 'nvm-link'))
     expect(roots).not.toContain(path.join(root, 'credentials-link'))
-    const readable = (target: string) => roots.some((entry) => target === entry || target.startsWith(`${entry}/`))
+    const readable = (target: string) =>
+      roots.some((entry) => target === entry || target.startsWith(`${entry}${path.sep}`))
     expect(readable(path.join(home, '.ssh', 'id_fixture'))).toBe(false)
     expect(readable(path.join(data, 'credentials', 'fixture.secret'))).toBe(false)
     expect(readable(path.join(data, 'workspaces', 'agent-b', 'notes.txt'))).toBe(false)
   })
 
   it('leaves directories DSH grants writable to that grant instead of listing their entries', () => {
-    const { home, workspace, confinement } = fixture()
+    const { home, workspace, confinement } = fixture(process.cwd())
     // A writable temporary directory that holds hidden roots, as when the data root sits under /tmp.
     const scratch = path.join(home, 'scratch')
     mkdirSync(path.join(scratch, 'short-lived'), { recursive: true })
     const roots = landlockReadRoots(readRules(confinement, workspace), [home])
-    expect(roots.some((entry) => entry === home || entry.startsWith(`${home}/`))).toBe(false)
+    expect(roots.some((entry) => entry === home || entry.startsWith(`${home}${path.sep}`))).toBe(false)
     // Everything outside it is still listed as before.
     expect(roots.length).toBeGreaterThan(0)
   })
@@ -149,9 +151,10 @@ describe('command confinement', () => {
   })
 
   it('finds the install root above node_modules', () => {
-    expect(installRootOf('/opt/nekro/server/node_modules/.pnpm/pkg/node_modules/pkg/package.json')).toBe(
-      '/opt/nekro/server',
-    )
+    const installRoot = path.resolve(path.sep, 'opt', 'nekro', 'server')
+    expect(
+      installRootOf(path.join(installRoot, 'node_modules', '.pnpm', 'pkg', 'node_modules', 'pkg', 'package.json')),
+    ).toBe(installRoot)
   })
 
   it.runIf(process.platform === 'darwin')('keeps commands out of hidden roots and off the network on macOS', () => {

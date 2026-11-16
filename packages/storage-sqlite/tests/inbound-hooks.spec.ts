@@ -6,7 +6,7 @@ import { createInboundHooksRepository } from '../src/repositories/inbound-hooks.
 import { AgentIdSchema, ChannelEventIdSchema, ExtensionIdSchema } from '@nekro-nxt/contracts'
 import type { DrizzleCoreDatabase } from '../src/database.js'
 import { coreSchema } from '../src/schema.js'
-import path from 'path'
+import { fileURLToPath } from 'node:url'
 
 describe('Inbound Hooks Repository', () => {
   let db: DrizzleCoreDatabase
@@ -31,7 +31,7 @@ describe('Inbound Hooks Repository', () => {
     sqlite = new Database(':memory:')
     db = drizzle(sqlite, { schema: coreSchema })
 
-    const migrationsFolder = path.join(path.dirname(import.meta.url.replace('file://', '')), '../migrations')
+    const migrationsFolder = fileURLToPath(new URL('../migrations/', import.meta.url))
     migrate(db, { migrationsFolder })
 
     // Create test data

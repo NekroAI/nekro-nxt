@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { ExtensionIdSchema, ExtensionRevisionIdSchema, HostUiPageEntrySchema } from '@nekro-nxt/contracts'
 import { ExtensionBuilder, ExtensionSourceStore, materializeDynamicPackage } from '@nekro-nxt/extension-runtime'
 import { stylesSnapshot, stylesPage } from '../../../packages/extension-runtime/tests/fixtures/host-ui-styles.js'
@@ -75,7 +76,7 @@ describe('Host UI Client Runtime', () => {
         visible: true,
         sortOrder: 0,
         routeBase: '/apps/hup_STYLESPROBE',
-        client: { moduleUrl: artifact.clientEntry!, buildKey: artifact.buildKey },
+        client: { moduleUrl: pathToFileURL(artifact.clientEntry!).pathname, buildKey: artifact.buildKey },
         createdAt: 1,
         updatedAt: 1,
       })

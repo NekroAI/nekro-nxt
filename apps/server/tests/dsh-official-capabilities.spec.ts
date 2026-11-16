@@ -712,7 +712,7 @@ describe('DSH official capability composition', () => {
           'asset_create',
           'asset_inspect',
           'web_search',
-          'bash',
+          process.platform === 'win32' ? 'pwsh' : 'bash',
           'read',
           'write',
           'edit',
