@@ -25,8 +25,10 @@ import { unusedNxtBackends } from './fixtures/unused-nxt-backends.js'
 
 const directories: string[] = []
 const stores: ExtensionFileStore[] = []
+const databases: Array<Awaited<ReturnType<typeof openMigratedCoreDatabase>>> = []
 afterEach(async () => {
   await Promise.all(stores.splice(0).map((store) => store.dispose()))
+  for (const database of databases.splice(0)) database.close()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -51,6 +53,7 @@ const transcript = (text: string) => ({
 const setup = async (overrides: Partial<Pick<NxtServiceBackends, 'media' | 'commands' | 'speech'>> = {}) => {
   const directory = await temporary('nekro-nxt-media-services-')
   const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+  databases.push(database)
   const repository = new SqliteCoreRepository(database)
   database.db
     .insert(localExtensions)

@@ -24,7 +24,9 @@ import { ExtensionLibrary, sqliteLibraryRegistry } from '../src/extension-librar
 import { unusedNxtBackends, unusedMediaBackends } from './fixtures/unused-nxt-backends.js'
 
 const directories: string[] = []
+const databases: Array<Awaited<ReturnType<typeof openMigratedCoreDatabase>>> = []
 afterEach(async () => {
+  for (const database of databases.splice(0)) database.close()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -59,6 +61,7 @@ const setup = async (options: { readonly vectors?: IndexVectorProvider } = {}) =
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-library-'))
   directories.push(directory)
   const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+  databases.push(database)
   const repository = new SqliteCoreRepository(database)
   database.db
     .insert(localExtensions)
