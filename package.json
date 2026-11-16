@@ -50,7 +50,7 @@
     "sync:references": "node scripts/sync-workspace-references.mjs --write",
     "test:browser": "playwright test --config playwright.browser.config.ts",
     "test:journey:built": "playwright test",
-    "docs:shots": "rm -rf .local/docs-shots && playwright test -c playwright.docs.config.ts; flows=$?; node scripts/docs-widgets.mjs && exit $flows",
+    "docs:shots": "node -e \"const { rmSync } = require('node:fs'); const { spawnSync } = require('node:child_process'); rmSync('.local/docs-shots', { recursive: true, force: true }); const run = (command) => spawnSync(command, { stdio: 'inherit', shell: true }).status ?? 1; const flows = run('playwright test -c playwright.docs.config.ts'); process.exit(run('node scripts/docs-widgets.mjs') || flows)\"",
     "dsh:plan-upgrade": "node scripts/plan-dsh-upgrade.mjs",
     "test:upgrade": "vitest run packages/client-migrations/tests/upgrade.spec.ts apps/server/tests/host-upgrade.spec.ts apps/server/tests/host-lifecycle-upgrade.spec.ts apps/server/tests/upgrade-backup.spec.ts apps/server/tests/upgrade-progress.spec.ts apps/server/tests/data-root-lease.spec.ts apps/server/tests/runtime-compatibility.spec.ts apps/server/tests/session-shutdown-inbox.spec.ts apps/server/tests/dsh-session-storage.spec.ts apps/server/tests/dsh-jsonl-persistence.spec.ts packages/storage-sqlite/tests/backup-files.spec.ts apps/desktop/tests/host-startup.spec.ts"
   },
