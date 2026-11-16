@@ -89,6 +89,59 @@ describe('media processing workspace', () => {
   })
 })
 
+it('isolates concurrent probe work folders and removes them only after their runs finish', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media-probe-'))
+  const input = path.join(directory, 'input.bin')
+  await writeFile(input, 'fixture input')
+  const runner = new ConfinedProgramRunner({
+    sandbox: { confine: () => Promise.reject(new Error('unused')) },
+    confinement: { hidden: [], readable: [] },
+  })
+  const requests: ConfinedProgramRequest[] = []
+  let release!: () => void
+  const held = new Promise<void>((resolve) => (release = resolve))
+  const run = vi.spyOn(runner, 'run').mockImplementation(async (request) => {
+    requests.push(request)
+    await held
+    return {
+      exitCode: 0,
+      stdout: Buffer.from(JSON.stringify({ format: { format_name: 'fixture' }, streams: [] })),
+      stderr: '',
+      truncated: false,
+      timedOut: false,
+      confinement: 'full',
+    }
+  })
+  const toolkit = new MediaToolkit({ programs: () => ({ ffmpeg: 'fixture', ffprobe: 'fixture' }), runner })
+  const probes = [toolkit.probe(input), toolkit.probe(input)]
+  try {
+    await vi.waitFor(() => expect(requests).toHaveLength(2))
+    expect(new Set(requests.map(({ cwd }) => cwd)).size).toBe(2)
+    for (const request of requests) {
+      expect(path.resolve(request.cwd)).not.toBe(path.resolve(tmpdir()))
+      expect(request.readable).toEqual([input])
+      expect((await stat(request.cwd)).isDirectory()).toBe(true)
+    }
+    release()
+    expect(await Promise.all(probes)).toEqual([
+      { format: 'fixture', streams: [] },
+      { format: 'fixture', streams: [] },
+    ])
+    for (const { cwd } of requests) await expect(stat(cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+    run.mockImplementationOnce((request) => {
+      requests.push(request)
+      return Promise.reject(new Error('fixture probe failed'))
+    })
+    await expect(toolkit.probe(input)).rejects.toThrow('fixture probe failed')
+    await expect(stat(requests.at(-1)!.cwd)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    release()
+    await Promise.allSettled(probes)
+    run.mockRestore()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 it('names a failed input by its file name alone when its path has spaces', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media name-'))
   const input = path.join(directory, 'clip one.mp4')
@@ -175,6 +228,7 @@ describe.skipIf(programs === undefined)('media processing with this device’s f
   let inputs: string
   let sandbox: Awaited<ReturnType<typeof createProgramSandbox>>
   let toolkit: MediaToolkit
+  const cachedFiles = sharp.cache().files.max
   const ffmpeg = (...args: string[]) =>
     execFileSync(programs!.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', ...args], { stdio: 'pipe' })
   const out = async (name: string) => {
@@ -184,6 +238,8 @@ describe.skipIf(programs === undefined)('media processing with this device’s f
   }
 
   beforeAll(async () => {
+    // These fixture files are removed after the suite; libvips must not retain open handles on Windows.
+    sharp.cache({ files: 0 })
     root = realpathSync(await mkdtemp(path.join(tmpdir(), 'nekro-nxt-media-')))
     // Inputs sit in a folder the confinement hides, as files under the data root do.
     inputs = path.join(root, 'hidden')
@@ -225,8 +281,12 @@ describe.skipIf(programs === undefined)('media processing with this device’s f
   })
 
   afterAll(async () => {
-    await sandbox.dispose()
-    await rm(root, { recursive: true, force: true })
+    try {
+      await sandbox.dispose()
+      await rm(root, { recursive: true, force: true })
+    } finally {
+      sharp.cache({ files: cachedFiles })
+    }
   })
 
   it('probes duration, container and streams', async () => {
