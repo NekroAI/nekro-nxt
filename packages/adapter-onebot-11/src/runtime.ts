@@ -561,7 +561,26 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
       plans.push([part])
     }
     if (current.length > 0) plans.push(current)
-    return Promise.resolve(plans.map((parts) => ({ parts })))
+    // Keep an isolated quote with the next message that can carry it, or the last such message when it trails.
+    const carrying: MessagePart[][] = []
+    const pendingQuotes: MessagePart[] = []
+    let lastQuoteCarrier: MessagePart[] | undefined
+    for (const parts of plans) {
+      if (parts.every(({ type }) => type === 'quote')) {
+        pendingQuotes.push(...parts)
+        continue
+      }
+      if (parts.every(({ type }) => type !== 'audio' && type !== 'file')) {
+        parts.unshift(...pendingQuotes.splice(0))
+        lastQuoteCarrier = parts
+      }
+      carrying.push(parts)
+    }
+    if (lastQuoteCarrier !== undefined && pendingQuotes.length > 0) {
+      const contentIndex = lastQuoteCarrier.findIndex(({ type }) => type !== 'quote')
+      lastQuoteCarrier.splice(contentIndex, 0, ...pendingQuotes)
+    }
+    return Promise.resolve((carrying.length > 0 ? carrying : plans).map((parts) => ({ parts })))
   }
 
   async deliver(request: PhysicalDeliveryRequest, signal: AbortSignal): Promise<AdapterDeliveryReceipt> {
@@ -695,6 +714,7 @@ export class OneBot11Runtime implements AdapterConnectionRuntime {
           break
         }
         case 'quote': {
+          if (part.messageId === request.replyTo) break
           const platformMessageId = await this.#context.messages.resolvePlatformMessageId(
             request.channelId,
             part.messageId,
