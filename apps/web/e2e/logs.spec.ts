@@ -72,6 +72,7 @@ test('copies log details where the Clipboard API is missing, as on plain HTTP LA
   })
   await page.goto(`${origin}/logs`)
   await page.getByRole('textbox', { name: '搜索日志' }).fill('虚构连接请求超时')
+  await expect(page.getByText(/1 条已加载/u)).toBeVisible()
   await page.getByRole('gridcell', { name: '错误 示例扩展 虚构连接请求超时' }).click()
   expect(await page.evaluate(() => 'clipboard' in navigator)).toBe(false)
   await page.getByRole('complementary', { name: '日志详情' }).getByRole('button', { name: '复制详情' }).click()
