@@ -174,6 +174,7 @@ describe('data move preflight', () => {
       storage: {
         ...localStorageFacts(),
         mounts: () => Promise.resolve([{ mountPoint: path.join(root, 'share'), type: 'smbfs' }]),
+        windowsDriveType: () => Promise.resolve('Network'),
       },
     })
     expect(network).toEqual({ ok: false, problem: { code: 'network' } })
@@ -244,7 +245,9 @@ describe('data move copy', () => {
     for (const skipped of ['data/backups', 'data/logs', 'data/runtimes', 'Cache', 'SingletonLock'])
       expect(copied).not.toContain(skipped)
     expect(copied).not.toContain('Partitions/remote-1/Code Cache')
-    expect(await readlink(path.join(target, 'data/workspaces/agent-1/node_modules/notes-link'))).toBe('../notes.md')
+    expect(await readlink(path.join(target, 'data/workspaces/agent-1/node_modules/notes-link'))).toBe(
+      path.join('..', 'notes.md'),
+    )
     expect(await readFile(path.join(target, 'data/assets/a1/content.bin'))).toEqual(Buffer.alloc(70_000, 3))
     expect(progress.at(-1)).toBe(plan.bytes)
     const newData = path.join(target, 'data')
