@@ -38,6 +38,143 @@ const socketFrom = (payloads: readonly unknown[]): QQGatewaySocket => ({
 })
 
 describe('QQ OpenClaw composed runtime', () => {
+  it('does not commit an attachment interrupted by stop and resumes it on restart', async () => {
+    let resumeState: QQGatewayCheckpoint | undefined
+    const accepted: AdapterChannelInboundEvent[] = []
+    let importAttempts = 0
+    let resolveImportStarted: (() => void) | undefined
+    const importStarted = new Promise<void>((resolve) => {
+      resolveImportStarted = resolve
+    })
+    let resolveCommitted: (() => void) | undefined
+    const committed = new Promise<void>((resolve) => {
+      resolveCommitted = resolve
+    })
+    const runtime = new QQOpenClawRuntime({
+      context: {
+        connectionId,
+        now: () => 1_000,
+        acceptChannelInbound: (event) => {
+          accepted.push(event)
+          return Promise.resolve({
+            channelEventId: ChannelEventIdSchema.parse('evt_resumed'),
+            inserted: true,
+          })
+        },
+      },
+      config: {
+        appId: 'app',
+        clientSecretCredentialRef: 'credential:qq',
+        proactiveSend: false,
+        maxAssetBytes: 1024,
+      },
+      directory: {
+        resolveTarget: () => Promise.resolve(undefined),
+        resolveMemberOpenId: () => Promise.resolve(undefined),
+        resolvePlatformMessageId: () => Promise.resolve(undefined),
+      },
+      assets: { read: () => Promise.reject(new Error('not used')) },
+      inbound: {
+        ensureTarget: () => Promise.resolve(channelId),
+        ensureMember: () => Promise.resolve(ChannelMemberIdSchema.parse('mbr_sender')),
+        isSelfMember: () => Promise.resolve(false),
+        resolveQuote: () => Promise.resolve(undefined),
+        importAttachment: ({ signal }) => {
+          importAttempts += 1
+          if (importAttempts === 1) {
+            return new Promise((_resolve, reject) => {
+              resolveImportStarted?.()
+              const abortError = (): Error =>
+                signal.reason instanceof Error ? signal.reason : new Error('QQ attachment import stopped.')
+              if (signal.aborted) reject(abortError())
+              else signal.addEventListener('abort', () => reject(abortError()), { once: true })
+            })
+          }
+          return Promise.resolve({ assetId: AssetIdSchema.parse('ast_resumed'), mediaType: 'image/png' })
+        },
+      },
+      transport: {
+        start: () => Promise.resolve(),
+        stop: () => Promise.resolve(),
+        sendText: () => Promise.reject(new Error('not used')),
+        upload: () => Promise.reject(new Error('not used')),
+        sendMedia: () => Promise.reject(new Error('not used')),
+      },
+      gateway: {
+        access: {
+          gatewayUrl: () => Promise.resolve('wss://gateway.test'),
+          accessToken: () => Promise.resolve('token'),
+        },
+        sockets: {
+          connect: () =>
+            Promise.resolve(
+              socketFrom([
+                { op: 10, d: { heartbeat_interval: 45_000 } },
+                { op: 0, t: 'READY', s: 1, d: { session_id: 'session-resumed' } },
+                {
+                  op: 0,
+                  t: 'GROUP_MESSAGE_CREATE',
+                  s: 2,
+                  d: {
+                    id: 'qq-resumed-message',
+                    group_openid: 'group-openid',
+                    author: { member_openid: 'sender-openid' },
+                    content: '保留文字与图片',
+                    attachments: [{ url: 'https://cdn.test/image.png', content_type: 'image/png' }],
+                    timestamp: 1,
+                  },
+                },
+                { op: 7 },
+              ]),
+            ),
+        },
+        checkpoints: {
+          load: () => Promise.resolve(resumeState),
+          save: (value) => {
+            resumeState = value
+            if (value.sequence === 2) resolveCommitted?.()
+            return Promise.resolve()
+          },
+          clear: () => Promise.resolve(),
+        },
+        clock: {
+          now: () => 1_000,
+          sleep: (_delay, signal) =>
+            new Promise<void>((_resolve, reject) => {
+              const abortError = (): Error =>
+                signal.reason instanceof Error ? signal.reason : new Error('QQ Gateway sleep stopped.')
+              if (signal.aborted) reject(abortError())
+              else signal.addEventListener('abort', () => reject(abortError()), { once: true })
+            }),
+          setInterval: () => () => {},
+        },
+      },
+    })
+    await runtime.start()
+    try {
+      await importStarted
+      await runtime.stop()
+      expect(accepted).toEqual([])
+      expect(resumeState).toMatchObject({ sessionId: 'session-resumed', sequence: 1 })
+
+      await runtime.start()
+      await committed
+      expect(importAttempts).toBe(2)
+      expect(accepted).toHaveLength(1)
+      expect(accepted[0]).toMatchObject({
+        platformSequence: 2,
+        parts: [
+          { type: 'text', text: '保留文字与图片' },
+          { type: 'image', assetId: 'ast_resumed' },
+        ],
+        assetOccurrences: [{ partIndex: 1, assetId: 'ast_resumed' }],
+      })
+      expect(resumeState).toMatchObject({ sessionId: 'session-resumed', sequence: 2 })
+    } finally {
+      await runtime.stop()
+    }
+  })
+
   it('decodes Gateway media, commits the Channel fact, saves resume state and stops quiescently', async () => {
     let resumeState: QQGatewayCheckpoint | undefined
     let accepted: AdapterChannelInboundEvent | undefined
