@@ -137,7 +137,7 @@ export const dshEntryStatus = (entry: DshSettingsCatalogEntry): { readonly label
 }
 
 export const dshPackageLabel = (name: string): string => {
-  if (name === '@deepseek-ai/dsh-web-search-deepseek') return 'DeepSeek 网页搜索'
+  if (name === '@deepseek-ai/dsh-web-deepseek-api') return 'DeepSeek 网页搜索'
   if (name === '@deepseek-ai/dsh-agent-loop') return '思考与工具执行运行时'
   if (name === '@deepseek-ai/dsh-bash-sandbox') return '命令运行时'
   if (name === '@deepseek-ai/dsh-llm-pi-ai') return '模型供应商运行时'
@@ -1233,20 +1233,23 @@ function NamespaceEditor({
       if (node.type === 'tuple' && node.list) node.list.forEach((child, index) => walk(child, [...path, String(index)]))
     }
     walk(schema, [])
+    // The DeepSeek Search and Fetch APIs name no credential field by default: with `api-key` billing they use
+    // DEEPSEEK_API_KEY, so offer that one unless a capability names its own.
+    if (authority.ns === 'web-deepseek-api' && refs.length === 0) refs.push('DEEPSEEK_API_KEY')
     return [...new Set(refs)]
-  }, [rootValue, schema])
+  }, [authority.ns, rootValue, schema])
 
   return (
     <div className={styles.namespace}>
-      {authority.ns === 'web-search-deepseek' ? (
+      {authority.ns === 'web-deepseek-api' ? (
         <Banner tone="warn">
           <span className={styles.bannerList}>
-            <span>每次网页搜索都会产生额外的模型请求费用。</span>
+            <span>每次搜索、每次抓取网页都会按次单独计费（DeepSeek 搜索与抓取 API）。</span>
             <span>网页内容来自外部，属于不可信输入。</span>
             <span>
               默认限制
               <InfoTip label="网页搜索默认限制">
-                单次生成上限 1024 tokens、每次请求最多搜索 2 次、最多返回 5 条结果、工具 60 秒超时。
+                每次请求最多搜索 2 次、每次最多返回 5 条结果、搜索 60 秒超时。
               </InfoTip>
             </span>
           </span>
@@ -1383,7 +1386,7 @@ export function useDshCatalog(active: boolean) {
   }, [catalog])
   /** The entry to show when none is chosen: web search, else the first with settings. */
   const fallbackId =
-    entries.find((entry) => entry.plugin?.packageName === '@deepseek-ai/dsh-web-search-deepseek')?.id ??
+    entries.find((entry) => entry.plugin?.packageName === '@deepseek-ai/dsh-web-deepseek-api')?.id ??
     entries.find((entry) => entry.namespaces.length > 0)?.id ??
     entries[0]?.id ??
     ''

@@ -352,9 +352,9 @@ test('DSH extension settings use the NekroNXT configuration surface without load
     .getByRole('row', { name: /DeepSeek 网页搜索/u })
     .click()
   // Technical identity stays in the collapsed diagnostics.
-  await expect(page.getByText('web-search-deepseek', { exact: true })).toBeHidden()
+  await expect(page.getByText('web-deepseek-api', { exact: true })).toBeHidden()
   await page.getByRole('button', { name: '诊断信息' }).first().click()
-  await expect(page.getByText('web-search-deepseek', { exact: true })).toBeVisible()
+  await expect(page.getByText('web-deepseek-api', { exact: true })).toBeVisible()
   await expect(page.getByLabel('新的凭据值', { exact: true })).toHaveAttribute('type', 'password')
   await expect(page.getByLabel('新的凭据值', { exact: true })).toHaveAttribute('autocomplete', 'off')
 

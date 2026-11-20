@@ -3798,7 +3798,7 @@ test.describe('NekroNxt browser projections', () => {
       },
     }
     const namespace = {
-      ns: 'web-search-deepseek',
+      ns: 'web-deepseek-api',
       schema,
       resolved: {
         apiKeyEnv: 'DEEPSEEK_API_KEY',
@@ -3821,7 +3821,7 @@ test.describe('NekroNxt browser projections', () => {
       secrets: [{ path: ['apiKey'], set: false }],
       revision: 0,
       writable: true,
-      owner: { packageName: '@deepseek-ai/dsh-web-search-deepseek', packageVersion: '0.1.1-rc.2' },
+      owner: { packageName: '@deepseek-ai/dsh-web-deepseek-api', packageVersion: '0.2.2-rc.5' },
     }
     const mutations: unknown[] = []
     const credentialWrites: unknown[] = []
@@ -3845,10 +3845,10 @@ test.describe('NekroNxt browser projections', () => {
         body: JSON.stringify({
           plugins: [
             {
-              packageName: '@deepseek-ai/dsh-web-search-deepseek',
+              packageName: '@deepseek-ai/dsh-web-deepseek-api',
               packageVersion: '0.1.1-rc.2',
               origin: 'builtin',
-              settingsNamespaces: ['web-search-deepseek'],
+              settingsNamespaces: ['web-deepseek-api'],
             },
             {
               packageName: '@example/dsh-user-extension',
@@ -3881,7 +3881,7 @@ test.describe('NekroNxt browser projections', () => {
         body: JSON.stringify({ credentials: { DEEPSEEK_API_KEY: { configured: false, writable: true } } }),
       }),
     )
-    await page.route('**/api/dsh/settings/web-search-deepseek/mutate', async (route) => {
+    await page.route('**/api/dsh/settings/web-deepseek-api/mutate', async (route) => {
       const body: unknown = route.request().postDataJSON()
       if (typeof body !== 'object' || body === null || Array.isArray(body)) {
         throw new TypeError('DSH Settings mutation body must be a JSON object.')
