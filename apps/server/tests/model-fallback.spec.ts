@@ -115,25 +115,31 @@ describe('fallback models', () => {
     const model = new FlakyModel()
     const { runtime, entity, say } = await start(model, [{ provider: 'test-provider', model: 'backup-model' }])
     try {
+      // DSH fixes a step's model before the step is prepared and keeps it for its retries: the failed reply ends on
+      // the main model, and the switch applies from the next step.
       const sessionId = await say()
-      expect(model.requests).toEqual(['main-model', 'backup-model'])
-      // The tool call of the failed attempt never ran; only the fallback's did.
-      const results = runtime.host
+      expect(model.requests).toEqual(['main-model'])
+      // The tool call of the failed attempt never ran.
+      const failed = runtime.host
         .normalizedSessionEvents(sessionId)
         .filter((event) => event.type === 'tool/result')
         .map((event) => JSON.stringify(event))
-      expect(results.some((result) => result.includes('failed-1'))).toBe(false)
-      expect(results.some((result) => result.includes('call-2'))).toBe(true)
+      expect(failed.some((result) => result.includes('failed-1'))).toBe(false)
       expect(runtime.host.modelFallbackOf(entity.channelId)).toMatchObject({
         model: { provider: 'test-provider', model: 'backup-model' },
         reason: 'quota',
       })
 
-      // The main model is still cooling down: the next message goes straight to the fallback.
+      // The main model is still cooling down: the next message goes straight to the fallback, which runs its tools.
       model.requests.length = 0
       model.failure = undefined
       await say()
       expect(model.requests).toEqual(['backup-model'])
+      const results = runtime.host
+        .normalizedSessionEvents(sessionId)
+        .filter((event) => event.type === 'tool/result')
+        .map((event) => JSON.stringify(event))
+      expect(results.some((result) => result.includes('failed-1'))).toBe(false)
 
       // Once the cooldown is over, a new message goes back to the main model.
       model.requests.length = 0
@@ -183,9 +189,14 @@ describe('400 responses', () => {
     model.failure = relay400
     const { runtime, entity, say } = await start(model, [{ provider: 'test-provider', model: 'backup-model' }])
     try {
+      // The retries exhaust on the main model; that reply ends and the next message runs on the fallback.
       await say()
-      expect(model.requests).toEqual([...Array<string>(6).fill('main-model'), 'backup-model'])
+      expect(model.requests).toEqual(Array<string>(6).fill('main-model'))
       expect(runtime.host.modelFallbackOf(entity.channelId)).toMatchObject({ reason: 'unavailable' })
+      model.requests.length = 0
+      model.failure = undefined
+      await say()
+      expect(model.requests).toEqual(['backup-model'])
     } finally {
       await runtime.dispose()
     }

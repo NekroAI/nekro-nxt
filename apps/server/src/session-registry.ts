@@ -12,6 +12,8 @@ export interface OwnedSession<Dynamic> {
   dynamic?: Dynamic
   /** Prompt measurement and the capability packs of this session (#133). */
   capabilityPacks?: CapabilityPackView
+  /** The agent writes `run_code` programs: its scope selects DSH's PTC executor. */
+  codeRun?: boolean
   imageInput: boolean
 }
 

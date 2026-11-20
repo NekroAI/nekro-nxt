@@ -1,5 +1,6 @@
 import { formatContextTime } from './scheduled-tasks.js'
 import { sessionEvents } from './session-event-history.js'
+import { appendNxtRecord, nxtRecordOf } from './nxt-session-records.js'
 import { parseDshImageAttachmentRef } from './dsh-interop/unsafe.js'
 import type { DshHostRuntimeOptions } from './index.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -27,7 +28,7 @@ import {
   type TextBlock,
   type UserMessage,
 } from '@deepseek-ai/dsh-llm'
-import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { SessionId, type PluginRecordMap } from '@deepseek-ai/dsh-session'
 import { isAdminConsoleOutbound, type ChannelHistoryEntry } from '@nekro-nxt/channel-runtime'
 import {
   AssetIdSchema,
@@ -493,18 +494,15 @@ export const collectVisibleImageResidency = (
   }
   for (const message of agent.session.deriveMessages()) visit(message.content)
   for (const event of sessionEvents(agent.session)) {
-    if (
-      event.type !== 'nekro-nxt/image-inspection' ||
-      event.data.mode !== 'direct' ||
-      event.data.result === undefined
-    ) {
+    const inspection = nxtRecordOf(event, 'plugin:nekro-nxt/image-inspection')
+    if (inspection === undefined || inspection.data.mode !== 'direct' || inspection.data.result === undefined) {
       continue
     }
-    const result = DirectImageInspectionValueSchema.safeParse(event.data.result)
+    const result = DirectImageInspectionValueSchema.safeParse(inspection.data.result)
     if (!result.success) continue
     for (const image of result.data.images) {
       if (image.status !== 'injected' && image.status !== 'detail-upgraded') continue
-      const digest = event.data.contentDigests[image.index]
+      const digest = inspection.data.contentDigests[image.index]
       if (digest === undefined || !residency.has(digest)) continue
       const current = residency.get(digest)!
       if (imageDetailRank(result.data.effectiveDetail) > imageDetailRank(current)) {
@@ -786,7 +784,7 @@ export class NekroNxtCompactionEngine extends BasicCompactionEngine {
     for await (const chunk of this.ctx.llm.stream(options)) assembler.push(chunk)
     const finish = assembler.finish
     if (finish.kind === 'error' || finish.kind === 'aborted') {
-      throw new LlmError(finish.failure.message, finish.failure.code, finish.failure)
+      throw LlmError.fromFailure(finish.failure)
     }
     if (finish.kind === 'max-tokens') throw new Error('Compaction summary was cut off at the token limit.')
     const rawOutput = assembler.blocks()
@@ -963,21 +961,24 @@ export class SessionImageContext {
     let residentImages = 0
     let duplicateImagesSkipped = 0
     let latestInspection:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-inspection'>['data'] } | undefined
+      { readonly time: number; readonly data: PluginRecordMap['plugin:nekro-nxt/image-inspection'] } | undefined
     let latestRestoration:
-      { readonly time: number; readonly data: SessionEvent<'nekro-nxt/image-restoration'>['data'] } | undefined
+      { readonly time: number; readonly data: PluginRecordMap['plugin:nekro-nxt/image-restoration'] } | undefined
     for (const agent of sessions) {
       residentImages += collectVisibleImageResidency(agent, this.#assets, revision.imagePolicy.history.detail).size
       for (const event of sessionEvents(agent.session)) {
-        if (event.type === 'nekro-nxt/image-admission') {
-          duplicateImagesSkipped += event.data.duplicateCount
-        } else if (event.type === 'nekro-nxt/image-inspection') {
-          if (latestInspection === undefined || event.time > latestInspection.time) {
-            latestInspection = { time: event.time, data: event.data }
+        const admission = nxtRecordOf(event, 'plugin:nekro-nxt/image-admission')
+        const inspection = nxtRecordOf(event, 'plugin:nekro-nxt/image-inspection')
+        const restoration = nxtRecordOf(event, 'plugin:nekro-nxt/image-restoration')
+        if (admission !== undefined) {
+          duplicateImagesSkipped += admission.data.duplicateCount
+        } else if (inspection !== undefined) {
+          if (latestInspection === undefined || inspection.time > latestInspection.time) {
+            latestInspection = { time: inspection.time, data: inspection.data }
           }
-        } else if (event.type === 'nekro-nxt/image-restoration') {
-          if (latestRestoration === undefined || event.time > latestRestoration.time) {
-            latestRestoration = { time: event.time, data: event.data }
+        } else if (restoration !== undefined) {
+          if (latestRestoration === undefined || restoration.time > latestRestoration.time) {
+            latestRestoration = { time: restoration.time, data: restoration.data }
           }
         }
       }
@@ -1029,7 +1030,7 @@ export class SessionImageContext {
     const compactionId = String(latest.data.compactionId)
     const settled = sessionEvents(agent.session).some(
       (event) =>
-        (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
+        nxtRecordOf(event, 'plugin:nekro-nxt/image-restoration')?.data.compactionId === compactionId ||
         (event.type === 'user/message' &&
           event.data.source.kind === 'nekro-nxt-visual-restore' &&
           event.data.source.compactionId === compactionId),
@@ -1047,7 +1048,7 @@ export class SessionImageContext {
     if (
       sessionEvents(agent.session).some(
         (event) =>
-          (event.type === 'nekro-nxt/image-restoration' && event.data.compactionId === compactionId) ||
+          nxtRecordOf(event, 'plugin:nekro-nxt/image-restoration')?.data.compactionId === compactionId ||
           (event.type === 'user/message' &&
             event.data.source.kind === 'nekro-nxt-visual-restore' &&
             event.data.source.compactionId === compactionId),
@@ -1210,7 +1211,7 @@ export class SessionImageContext {
         const message = makeRestoreMessage(restoredAssets)
         agent.session.append('user/message', message, { surfaceOp: 'append' })
       }
-      agent.session.append('nekro-nxt/image-restoration', {
+      appendNxtRecord(agent.session, 'plugin:nekro-nxt/image-restoration', {
         compactionId,
         candidateCount: candidates.length,
         restoredAssetIds: restoredAssets.map(({ assetId }) => assetId),
@@ -1218,7 +1219,7 @@ export class SessionImageContext {
       })
       await this.#context.sessions.flush(agent.session)
     } catch (error) {
-      agent.session.append('nekro-nxt/image-restoration', {
+      appendNxtRecord(agent.session, 'plugin:nekro-nxt/image-restoration', {
         compactionId,
         candidateCount: 0,
         restoredAssetIds: [],

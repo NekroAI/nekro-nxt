@@ -171,14 +171,15 @@ describe('NXT DSH profile migration and Settings', () => {
       'retired-entry',
     ])
     expect(await readFile(path.join(root, 'settings.yaml'), 'utf8')).toBe(source)
-    expect(await first.llm.listModels('fixture')).toEqual([expect.objectContaining({ id: 'fixture-model' })])
+    // No key is stored, so the adapter lists no models; the route still serves its declared model.
+    expect(await first.llm.resolveModelInfo('fixture', 'fixture-model')).toMatchObject({ id: 'fixture-model' })
     expect(first.llm.listProviders().some(({ id }) => id === 'broken')).toBe(false)
     await first.fiber.dispose()
     contexts.splice(contexts.indexOf(first), 1)
     await writeFile(path.join(root, 'settings.yaml'), 'invalid: [')
     const second = await createProfile(root)
     expect((await activateDshHostProfile(second)).map((issue) => issue.objectId)).toEqual(['broken', 'retired-entry'])
-    expect(await second.llm.listModels('fixture')).toHaveLength(1)
+    expect(await second.llm.resolveModelInfo('fixture', 'fixture-model')).toMatchObject({ id: 'fixture-model' })
   })
 
   it('refuses malformed legacy documents without publishing a partial profile', async () => {
@@ -199,7 +200,7 @@ describe('NXT DSH profile migration and Settings', () => {
     expect((await activateDshHostProfile(context))[0]).toMatchObject({ status: 'isolated', phase: 'configuration' })
     expect(context.llm.listProviders()).toEqual([])
     await retryDshHostProfileEntry(context, 'llm-pi-ai', { providers: { fixture: customProvider } })
-    expect(await context.llm.listModels('fixture')).toHaveLength(1)
+    expect(await context.llm.resolveModelInfo('fixture', 'fixture-model')).toMatchObject({ id: 'fixture-model' })
     expect(new HostModelSettings(context, true).listDshSettings()).toHaveLength(1)
   })
 
@@ -227,7 +228,7 @@ describe('NXT DSH profile migration and Settings', () => {
     ])
     await retryDshHostProfileCompatibility(context, 'one')
     expect(getDshHostProfileDiagnostics(context).map(({ objectId }) => objectId)).toEqual(['two'])
-    expect(await context.llm.listModels('one')).toHaveLength(1)
+    expect(await context.llm.resolveModelInfo('one', 'fixture-model')).toMatchObject({ id: 'fixture-model' })
   })
 
   it('suppresses a failed optional plugin across Settings writes and restarts', async () => {

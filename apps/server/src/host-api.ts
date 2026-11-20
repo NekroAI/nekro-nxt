@@ -72,6 +72,13 @@ export {
   projectHistoryEntry,
 } from './host-route-support.js'
 
+/** The bound port of a started web server; DSH reports none before the listener binds. */
+export const listeningPort = (webServer: Pick<WebServer, 'port'>): number => {
+  const port = webServer.port
+  if (port === undefined) throw new Error('The web server is not listening yet.')
+  return port
+}
+
 /**
  * The NekroNxt domain API, wired directly onto the DSH WebServer seam. It is
  * the REST/SSE surface the Web product consumes — no database handle and no
@@ -857,7 +864,7 @@ export const createNekroHostApi = (
   return {
     checkReadiness,
     get port() {
-      return webServer.port
+      return listeningPort(webServer)
     },
     dispose() {
       if (factTimer !== undefined) clearTimeout(factTimer)

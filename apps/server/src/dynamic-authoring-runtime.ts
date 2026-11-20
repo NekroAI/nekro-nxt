@@ -1411,7 +1411,8 @@ export class DynamicAuthoringRuntime {
     const snapshot = await this.dynamicAuthoringSnapshot(dshSessionId, pluginId, packageId)
     const inputs = snapshot?.verificationInputs
     const visibleTools = this.#context.tools.schemas(scopeOf(agent.ctx))
-    const usesCodeRun = visibleTools.some((tool) => tool.name === 'run_code')
+    // run_code is the PTC executor's transport, not a registered tool; the Session records that its agent selected it.
+    const usesCodeRun = this.#sessions.get(dshSessionId)?.codeRun === true
     const toolInvocations = [] as Array<{ readonly name: string; readonly succeeded: boolean }>
     const permissions: ExtensionPermissions = snapshot?.permissions ?? { permissions: [], networkOrigins: [] }
     const contributions: ExtensionContribution[] = []

@@ -1,11 +1,13 @@
 /**
  * Static delivery for the Web build output: content types, cache validators and
- * on-demand compression in front of the upstream static helper, which sets no
- * cache or encoding headers. Anything this module cannot serve safely (missing
- * file, directory, entry HTML, unknown extension) is declined so the helper
- * keeps its original behavior.
+ * on-demand compression. Anything the asset handler cannot serve safely (missing
+ * file, directory, entry HTML, unknown extension) is declined and answered by
+ * {@link serveDistFallback}, which keeps the plain behavior of DSH's static
+ * frontend: 403 outside the dist root, 404 when missing, octet-stream otherwise.
  */
+import { renderIndexInjections, type WebServer } from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import path from 'node:path'
@@ -189,4 +191,51 @@ export const createWebAssetHandler = (distRoot: string, distIndex: string): WebA
     response.end(request.method === 'HEAD' ? undefined : body)
     return true
   }
+}
+
+/**
+ * Render the product entry page. NXT's web context mounts no DSH Connection (the management edge owns sign-in) and no
+ * `webserver/index-inject` subscriber, so there is no Peer to render for: the page gets the webserver's structured
+ * rendering of an empty injection table and its raw taps.
+ */
+export const renderProductIndex = (webServer: Pick<WebServer, 'applyIndexTaps'>, html: string): string =>
+  webServer.applyIndexTaps(renderIndexInjections(html, []))
+
+const FALLBACK_MISS_CODES: ReadonlySet<string | undefined> = new Set(['ENOENT', 'EISDIR', 'ENOTDIR'])
+
+/**
+ * Answer a GET or HEAD dist request the asset handler declined and that is not the entry page: 403 for a path outside
+ * the dist root, 404 for a missing or non-file target, otherwise the bytes as `application/octet-stream` with a weak
+ * validator. Other filesystem failures reject.
+ */
+export const serveDistFallback = async (
+  request: IncomingMessage,
+  response: ServerResponse,
+  pathname: string,
+  distRoot: string,
+): Promise<void> => {
+  const target = path.resolve(path.normalize(path.join(distRoot, pathname)))
+  if (target !== distRoot && !target.startsWith(distRoot + path.sep)) {
+    response.writeHead(403)
+    response.end()
+    return
+  }
+  let body: Buffer
+  try {
+    body = await readFile(target)
+  } catch (error) {
+    const code = error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : undefined
+    if (!FALLBACK_MISS_CODES.has(code)) throw error
+    response.writeHead(404)
+    response.end()
+    return
+  }
+  const cache = { 'cache-control': 'no-cache', etag: `W/"${createHash('sha1').update(body).digest('base64url')}"` }
+  if (matchesEtag(request.headers['if-none-match'], cache.etag)) {
+    response.writeHead(304, cache)
+    response.end()
+    return
+  }
+  response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': body.length, ...cache })
+  response.end(request.method === 'HEAD' ? undefined : body)
 }

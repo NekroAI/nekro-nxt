@@ -452,7 +452,9 @@ return { refused, loaded: await tools.capability_load({ names: ['定时任务'] 
       const [first, , third] = scenario.model.calls
       const names = (call: GenerateOptions | undefined) => call?.tools?.map(({ name }) => name) ?? []
       expect(names(first)).toEqual(expect.arrayContaining(['capability_load', 'read', 'write']))
-      for (const name of ['move', 'delete', 'glob', 'grep', 'unzip']) expect(names(first)).not.toContain(name)
+      for (const name of ['move', 'delete', 'glob', 'unzip']) expect(names(first)).not.toContain(name)
+      // DSH's grep registers itself without a step condition, so under direct tool calls it stays resident.
+      expect(names(first)).toContain('grep')
       expect(textOf(first, 'user')).toContain('- 文件管理：')
       expect(names(third)).toEqual(expect.arrayContaining(['move', 'make_dir', 'glob', 'grep']))
       expect(textOf(third, 'tool')).toContain('已新建目录 notes')

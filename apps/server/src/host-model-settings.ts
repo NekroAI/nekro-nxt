@@ -160,7 +160,7 @@ export interface LlmProviderSettingsView {
 
 export interface WebSearchCapabilityStatus {
   readonly unavailableReason?: string
-  readonly provider: 'deepseek-official'
+  readonly provider: 'deepseek-search-api'
   readonly available: boolean
   readonly credentialConfigured: boolean
   readonly credentialReference: string
@@ -359,7 +359,7 @@ const LlmProviderProfileSchema = z
   })
   .passthrough()
 
-const WebSearchSettingsSchema = z.object({ apiKeyEnv: z.unknown().optional() }).passthrough()
+const WebSearchSettingsSchema = z.object({ searchApiKeyEnv: z.unknown().optional() }).passthrough()
 
 const readObjectPath = (value: unknown, pathSegments: readonly string[]): Record<string, unknown> | undefined => {
   let current: unknown = value
@@ -376,6 +376,17 @@ const stringField = (value: unknown): string | undefined => (typeof value === 's
 
 const credentialReferenceForProvider = (provider: string): string =>
   `${provider.toUpperCase().replaceAll('-', '_')}_API_KEY`
+/**
+ * The write-only view of one credential. DSH's description also carries a provider-masked preview of a stored value;
+ * NekroNXT credentials stay write-only, so that preview never leaves the Host.
+ */
+const credentialView = (info: { readonly configured: boolean; readonly source?: string; readonly writable: boolean }) =>
+  ({
+    configured: info.configured,
+    ...(info.source === undefined ? {} : { source: info.source }),
+    writable: info.writable,
+  }) satisfies DshCredentialView
+
 export class HostModelSettings {
   readonly #context: Context
   readonly #hasLlmSettings: boolean
@@ -521,7 +532,7 @@ export class HostModelSettings {
 
   async getWebSearchCapabilityStatus(): Promise<WebSearchCapabilityStatus> {
     const fallback: WebSearchCapabilityStatus = {
-      provider: 'deepseek-official',
+      provider: 'deepseek-search-api',
       available: false,
       credentialConfigured: false,
       credentialReference: 'DEEPSEEK_API_KEY',
@@ -532,15 +543,13 @@ export class HostModelSettings {
     if (!this.#hasLlmSettings) return fallback
     const descriptor = this.#context.settings
       .describe({ redactSecrets: true })
-      .find((candidate) => candidate.ns === 'web-search-deepseek')
+      .find((candidate) => candidate.ns === 'web-deepseek-api')
     const valuesResult = WebSearchSettingsSchema.safeParse(descriptor?.value)
     const values = valuesResult.success ? valuesResult.data : undefined
-    const credentialReference = typeof values?.apiKeyEnv === 'string' ? values.apiKeyEnv : fallback.credentialReference
+    const credentialReference =
+      typeof values?.searchApiKeyEnv === 'string' ? values.searchApiKeyEnv : fallback.credentialReference
     const credential = await this.#context.credentials.describe(credentialRef(credentialReference))
-    const inlineSecretConfigured =
-      descriptor?.secrets?.some((secret) => secret.set && secret.path.length === 1 && secret.path[0] === 'apiKey') ===
-      true
-    const credentialConfigured = credential.configured || inlineSecretConfigured
+    const credentialConfigured = credential.configured
     return { ...fallback, available: credentialConfigured, credentialConfigured, credentialReference }
   }
 
@@ -600,7 +609,7 @@ export class HostModelSettings {
       await Promise.all(
         refs.map(async (ref) => {
           const info = await this.#context.credentials.describe(credentialRef(ref))
-          return [ref, info] as const
+          return [ref, credentialView(info)] as const
         }),
       ),
     )
@@ -610,14 +619,14 @@ export class HostModelSettings {
     if (!this.#hasLlmSettings) throw new Error('DSH credentials are not enabled.')
     const branded = credentialRef(ref)
     await this.#context.credentials.set(branded, value)
-    return await this.#context.credentials.describe(branded)
+    return credentialView(await this.#context.credentials.describe(branded))
   }
 
   async unsetDshCredential(ref: string): Promise<DshCredentialView> {
     if (!this.#hasLlmSettings) throw new Error('DSH credentials are not enabled.')
     const branded = credentialRef(ref)
     await this.#context.credentials.unset(branded)
-    return await this.#context.credentials.describe(branded)
+    return credentialView(await this.#context.credentials.describe(branded))
   }
 
   onDshSettingsChanged(listener: (ns: string, revision: number) => void): () => void {

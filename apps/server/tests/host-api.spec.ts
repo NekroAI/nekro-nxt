@@ -86,7 +86,7 @@ const DshSettingsSnapshotSchema = z
   .passthrough()
 
 const DshSettingsMutationSchema = z
-  .object({ revision: z.number(), resolved: z.object({ maxUses: z.number() }).passthrough() })
+  .object({ revision: z.number(), resolved: z.object({ count: z.number() }).passthrough() })
   .passthrough()
 
 afterEach(async () => {
@@ -2104,9 +2104,9 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       const pluginCatalog = DshPluginCatalogSchema.parse(await pluginResponse.json())
       expect(pluginCatalog.plugins).toContainEqual(
         expect.objectContaining({
-          packageName: '@deepseek-ai/dsh-web-search-deepseek',
+          packageName: '@deepseek-ai/dsh-web-deepseek-api',
           origin: 'builtin',
-          settingsNamespaces: ['web-search-deepseek'],
+          settingsNamespaces: ['web-deepseek-api'],
         }),
       )
       expect(pluginCatalog.plugins).toContainEqual(
@@ -2130,51 +2130,42 @@ describe('NekroNxt Server domain API (WebServer seam)', () => {
       expect(settingsText).not.toContain('write-only-test-key')
       expect(settingsText).not.toContain('custom-write-only-test-key')
       const settings = DshSettingsSnapshotSchema.parse(JSON.parse(settingsText))
-      const webSearch = settings.namespaces.find((namespace) => namespace.ns === 'web-search-deepseek')!
-      expect(webSearch.resolved).toMatchObject({ apiKeyEnv: 'DEEPSEEK_API_KEY', maxTokens: 1024, maxUses: 2 })
-      expect(webSearch.secrets).toEqual(
-        expect.arrayContaining([expect.objectContaining({ path: ['apiKey'], set: false })]),
-      )
+      const webSearch = settings.namespaces.find((namespace) => namespace.ns === 'web-deepseek-api')!
+      expect(webSearch.resolved).toMatchObject({ count: 5, searchBilling: 'api-key', fetchBilling: 'api-key' })
 
-      const mutateResponse = await fetch(
-        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            expectedRevision: webSearch.revision,
-            ops: [{ op: 'set', path: ['maxUses'], value: 3 }],
-          }),
-        },
-      )
+      const mutateResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-deepseek-api/mutate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: webSearch.revision,
+          ops: [{ op: 'set', path: ['count'], value: 3 }],
+        }),
+      })
       expect(mutateResponse.ok).toBe(true)
       const mutated = DshSettingsMutationSchema.parse(await mutateResponse.json())
-      expect(mutated).toMatchObject({ resolved: { maxUses: 3 } })
+      expect(mutated).toMatchObject({ resolved: { count: 3 } })
       const conflictResponse = await fetch(
-        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
+        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-deepseek-api/mutate`,
         {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             expectedRevision: webSearch.revision,
-            ops: [{ op: 'set', path: ['maxUses'], value: 4 }],
+            ops: [{ op: 'set', path: ['count'], value: 4 }],
           }),
         },
       )
       expect(conflictResponse.status).toBe(409)
-      const unsetResponse = await fetch(
-        `http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-search-deepseek/mutate`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            expectedRevision: mutated.revision,
-            ops: [{ op: 'unset', path: ['maxUses'] }],
-          }),
-        },
-      )
+      const unsetResponse = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/settings/web-deepseek-api/mutate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          expectedRevision: mutated.revision,
+          ops: [{ op: 'unset', path: ['count'] }],
+        }),
+      })
       expect(unsetResponse.ok).toBe(true)
-      expect(await unsetResponse.json()).toMatchObject({ resolved: { maxUses: 2 } })
+      expect(await unsetResponse.json()).toMatchObject({ resolved: { count: 5 } })
 
       const credentialSet = await fetch(`http://127.0.0.1:${firstApi.port}/api/dsh/credentials/DEEPSEEK_API_KEY`, {
         method: 'PUT',

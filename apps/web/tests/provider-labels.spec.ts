@@ -4,7 +4,7 @@ import { providerDisplayName } from '../src/provider-labels.js'
 describe('providerDisplayName', () => {
   it('projects common DSH provider keys as product labels', () => {
     expect(providerDisplayName('deepseek', 'deepseek')).toBe('DeepSeek')
-    expect(providerDisplayName('azure-openai-responses', 'azure-openai-responses')).toBe('Azure OpenAI Responses')
+    expect(providerDisplayName('azure', 'azure')).toBe('Azure OpenAI')
     expect(providerDisplayName('github-copilot', 'github-copilot')).toBe('GitHub Copilot')
   })
 

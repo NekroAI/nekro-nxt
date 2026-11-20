@@ -4,7 +4,7 @@ import { boot, composeEntries, loadOverlayPatches } from '@deepseek-ai/dsh-app-b
 import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 import { createScope, scopeOf } from '@deepseek-ai/dsh-scope'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
 import { defineTool, ToolRuntime } from '@deepseek-ai/dsh-tools'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -77,7 +77,7 @@ describe('DSH package family', () => {
     expect(cordisTool.apply).toBeTypeOf('function')
     expect(compaction.BasicCompactionEngine).toBeTypeOf('function')
     expect(webserver.WebServer).toBeTypeOf('function')
-    expect(persistence.default).toBeTypeOf('function')
+    expect(persistence.apply).toBeTypeOf('function')
   })
 
   it('composes the published Base and Web Bundle patches through the public profile seam', () => {
@@ -150,7 +150,7 @@ describe('DSH scope and Client Slot seams', () => {
     const root = new Context()
     try {
       await root.plugin(SystemPrompt, {})
-      await root.plugin(ToolRuntime, { mode: 'native' })
+      await root.plugin(ToolRuntime)
       const agentA = createScope(root, { agentId: 'agent-a' })
       const agentB = createScope(root, { agentId: 'agent-b' })
       const start = async (version: string) => {
@@ -289,8 +289,9 @@ describe('DSH Session persistence assembly', () => {
         const owner = await reader.agents.resume({
           resumeSessionId: sessionId,
           setup: (agentContext, agent) => {
+            // The Session is entered before setup and accepts live events; the Agent is published only after it.
             expect(reader.agents.get(sessionId)).toBeUndefined()
-            expect(reader.sessions.get(sessionId)).toBeUndefined()
+            expect(reader.sessions.get(sessionId)).toBe(agent.session)
             expect(scopeOf(agentContext)).toBe(agent)
             setupCount += 1
           },

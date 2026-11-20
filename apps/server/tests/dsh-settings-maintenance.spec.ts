@@ -115,7 +115,7 @@ describe('DSH settings maintenance at the product entrypoint', () => {
     await f.entered.promise
     const agent = f.context.agents.list()[0]!
     const loop = [...f.context.loader.entries()].find(({ options }) => options.id === 'agent-loop')!.fiber
-    const before = f.runtime.host.listDshSettings().find(({ ns }) => ns === 'web-search-deepseek')!
+    const before = f.runtime.host.listDshSettings().find(({ ns }) => ns === 'web-deepseek-api')!
     const writeEntered = deferred()
     const releaseWrite = deferred()
     const settings = f.context.settings
@@ -126,7 +126,7 @@ describe('DSH settings maintenance at the product entrypoint', () => {
       return mutate(...args)
     })
     const editing = f.runtime.host.mutateDshSettings(before.ns, before.revision, [
-      { op: 'set', path: ['maxUses'], value: 3 },
+      { op: 'set', path: ['count'], value: 3 },
     ])
     try {
       await Promise.resolve()
@@ -142,7 +142,7 @@ describe('DSH settings maintenance at the product entrypoint', () => {
     } finally {
       releaseWrite.resolve()
     }
-    expect(await editing).toMatchObject({ resolved: { maxUses: 3 } })
+    expect(await editing).toMatchObject({ resolved: { count: 3 } })
     await agent.whenIdle()
     expect(f.model.calls).toBeGreaterThan(2)
     expect([...f.context.loader.entries()].find(({ options }) => options.id === 'agent-loop')!.fiber).toBe(loop)
@@ -192,10 +192,10 @@ describe('DSH settings maintenance at the product entrypoint', () => {
       filename,
       stringify([...patches, { id: 'agent-loop', config: { agents: [{ id: 'unexpected-cold-agent' }] } }]),
     )
-    const before = f.runtime.host.listDshSettings().find(({ ns }) => ns === 'web-search-deepseek')!
+    const before = f.runtime.host.listDshSettings().find(({ ns }) => ns === 'web-deepseek-api')!
     try {
       await expect(
-        f.runtime.host.mutateDshSettings(before.ns, before.revision, [{ op: 'set', path: ['maxUses'], value: 3 }]),
+        f.runtime.host.mutateDshSettings(before.ns, before.revision, [{ op: 'set', path: ['count'], value: 3 }]),
       ).rejects.toThrow()
       expect(f.context.agents.get(agent.id)).toBe(agent)
     } finally {
