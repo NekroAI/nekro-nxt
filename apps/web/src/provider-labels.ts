@@ -2,7 +2,7 @@ const providerLabels: Readonly<Record<string, string>> = {
   'amazon-bedrock': 'Amazon Bedrock',
   'ant-ling': 'Ant Ling',
   anthropic: 'Anthropic',
-  'azure-openai-responses': 'Azure OpenAI Responses',
+  azure: 'Azure OpenAI',
   cerebras: 'Cerebras',
   'cloudflare-ai-gateway': 'Cloudflare AI Gateway',
   'cloudflare-workers-ai': 'Cloudflare Workers AI',

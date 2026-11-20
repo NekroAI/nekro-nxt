@@ -38,7 +38,7 @@ export const DSH_HOST_PROFILE_ENTRIES = {
   piAi: 'llm-pi-ai',
   deepSeek: 'llm-deepseek',
   agentLoop: 'agent-loop',
-  webSearch: 'web-search-deepseek',
+  webSearch: 'web-deepseek-api',
   subagent: 'subagent',
   spill: 'spill-policy',
 } as const
@@ -376,15 +376,22 @@ async function validatePiProvider(provider: string, profile: unknown): Promise<v
   try {
     await probe.plugin(LlmRuntime)
     await probe.plugin<Plugin>(LlmPiAi, { providers: { [provider]: profile } })
-    // A catalog removed by upstream remains an explicit unusable provider, never a renamed model.
-    const models = await probe.llm.listModels(provider)
-    if (models.length === 0) throw new Error('Provider has no serviceable models.')
+    // A catalog removed by upstream remains an explicit unusable provider, never a renamed model. The adapter lists
+    // no models while a route's credential is missing, so declared models are checked one by one instead; this needs
+    // no credential and makes no request.
+    if (!probe.llm.listProviders().some(({ id }) => id === provider)) throw new Error('Provider is not serviceable.')
     const configured = objectSchema.parse(profile)['models']
-    if (
-      Array.isArray(configured) &&
-      configured.some((model: unknown) => !models.some(({ id }) => id === objectSchema.parse(model)['id']))
-    ) {
-      throw new Error('Provider contains an unavailable model.')
+    if (Array.isArray(configured)) {
+      if (configured.length === 0) throw new Error('Provider has no serviceable models.')
+      for (const model of configured) {
+        const id = objectSchema.parse(model)['id']
+        if (typeof id !== 'string') throw new Error('Provider contains an unavailable model.')
+        try {
+          await probe.llm.resolveModelInfo(provider, id)
+        } catch (cause) {
+          throw new Error('Provider contains an unavailable model.', { cause })
+        }
+      }
     }
   } finally {
     // A failed disposer invalidates this preflight; never silently accept a leaking probe.

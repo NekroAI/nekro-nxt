@@ -52,6 +52,7 @@ import {
 } from '../src/index.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 import { ChannelPrompts } from '../src/channel-prompts.ts'
+import { nxtRecordOf } from '../src/nxt-session-records.ts'
 
 const systemText = (options: GenerateOptions | undefined): string =>
   options?.messages
@@ -3111,11 +3112,9 @@ describe('DSH Host and internal Channel vertical slice', () => {
         await host.whenIdle(episode.dshSessionId!)
       }
       const events = host.sessionEvents(sessionId!)
-      const audits = events.filter((event) => event.type === 'nekro-nxt/image-inspection')
+      const audits = events.flatMap((event) => nxtRecordOf(event, 'plugin:nekro-nxt/image-inspection') ?? [])
       expect(audits).toHaveLength(7)
-      expect(
-        audits.map((event) => (event.type === 'nekro-nxt/image-inspection' ? event.data.errorCode : null)),
-      ).toEqual([
+      expect(audits.map((audit) => audit.data.errorCode ?? null)).toEqual([
         'invalid-input',
         'invalid-input',
         'invalid-input',
@@ -3375,7 +3374,7 @@ describe('DSH Host and internal Channel vertical slice', () => {
               policyVersion: 1,
             })
           }
-          expect(events.filter((event) => event.type === 'nekro-nxt/image-restoration')).toHaveLength(1)
+          expect(events.filter((event) => nxtRecordOf(event, 'plugin:nekro-nxt/image-restoration'))).toHaveLength(1)
         }
         expect(repository.listChannelHistory(channel.id, { limit: 100 })).toHaveLength(beforeHistory)
       } finally {

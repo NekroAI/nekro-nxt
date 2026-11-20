@@ -19,6 +19,8 @@ import {
 import { dshPromptRegistry } from '../src/extension-host-service.ts'
 import { DshHostRuntime } from '../src/index.ts'
 import { HIDDEN_SECRET_TEXT, SecretRegistry } from '../src/secret-registry.ts'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import { executeToolCall } from './fixtures/tool-call.js'
 
 const SECRET = 'fictional-secret-0123456789abcdef'
 const DATA_ROOT = path.resolve('/srv/nekro-fixture')
@@ -37,6 +39,7 @@ const toolContext = async () => {
   const context = new Context()
   await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
   await context.plugin(ToolRuntime)
+  await context.plugin(NativeToolExecutor)
   mountCredentialRedaction(context, { secrets, protectedPaths: [CREDENTIAL_ROOT, DSH_CREDENTIALS] })
   const ran: string[] = []
   const anyArgs = {}
@@ -99,7 +102,7 @@ const toolContext = async () => {
   )
   let call = 0
   const execute = (name: string, args: unknown) =>
-    context.tools.execute({
+    executeToolCall(context, {
       callId: ToolCallId(`redaction-${++call}`),
       name,
       arguments: args,
@@ -173,6 +176,7 @@ describe('credential redaction in the tool pipeline', () => {
     const context = new Context()
     await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await context.plugin(ToolRuntime)
+    await context.plugin(NativeToolExecutor)
     const dispose = mountCredentialRedaction(context, { secrets, protectedPaths: [] })
     context.tools.register(
       defineTool({
@@ -184,7 +188,7 @@ describe('credential redaction in the tool pipeline', () => {
       }),
     )
     const echo = () =>
-      context.tools.execute({
+      executeToolCall(context, {
         callId: ToolCallId('echo'),
         name: 'echo',
         arguments: { text: SECRET },

@@ -192,19 +192,18 @@ export const feedbackTools = (context: FeedbackToolContext) => [
   }),
 ]
 
-/** Reconcile at prompt assembly, before the next request; revocation also blocks in-flight dispatch. */
-export const mountFeedbackTools = (runtime: Pick<ToolRuntime, 'register'>, context: FeedbackToolContext) => {
-  let disposers: Array<() => void> = []
-  const dispose = () => {
-    for (const remove of disposers.splice(0).reverse()) remove()
+/** The setting is read for each step; a revocation also blocks calls the current step already admitted. */
+export const mountFeedbackTools = (runtime: Pick<ToolRuntime, 'register' | 'guard'>, context: FeedbackToolContext) => {
+  const enabled = () => context.service()?.enabled() === true
+  const tools = feedbackTools(context)
+  const names = new Set(tools.map((tool) => tool.name))
+  const disposers = [
+    ...tools.map((tool) => runtime.register(tool, { when: enabled })),
+    runtime.guard((exec) => (names.has(exec.name) && !enabled() ? '社区反馈已经关闭。' : undefined)),
+  ]
+  return {
+    dispose: () => {
+      for (const remove of disposers.splice(0).reverse()) remove()
+    },
   }
-  const refresh = () => {
-    const enabled = context.service()?.enabled() === true
-    if (enabled === disposers.length > 0) return false
-    if (enabled) disposers = feedbackTools(context).map((tool) => runtime.register(tool))
-    else dispose()
-    return true
-  }
-  refresh()
-  return { refresh, dispose }
 }

@@ -13,6 +13,8 @@ import {
 import type { DynamicPackageSnapshot } from '@nekro-nxt/extension-runtime'
 
 const TOOL_CALL_TIMEOUT_MS = 60_000
+/** DSH's own default budget for closing a server connection. */
+const CLOSE_TIMEOUT_MS = 5_000
 const TEST_TIMEOUT_MS = 20_000
 const TEST_MAX_TOOLS = 100
 
@@ -156,6 +158,9 @@ export const mcpPluginConfig = async (
         env: env.values,
         cwd: options.cwd,
         toolCallTimeoutMs: TOOL_CALL_TIMEOUT_MS,
+        closeTimeoutMs: CLOSE_TIMEOUT_MS,
+        // Credentials are resolved above; a literal `${credential:…}` in a value stays as written.
+        expandTemplates: false,
         failOnStartupError: false,
       },
     }
@@ -172,6 +177,8 @@ export const mcpPluginConfig = async (
       url: server.url,
       headers: headers.values,
       toolCallTimeoutMs: TOOL_CALL_TIMEOUT_MS,
+      closeTimeoutMs: CLOSE_TIMEOUT_MS,
+      expandTemplates: false,
       failOnStartupError: false,
     },
   }

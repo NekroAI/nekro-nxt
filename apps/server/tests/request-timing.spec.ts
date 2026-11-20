@@ -1,9 +1,10 @@
 import { Context } from '@deepseek-ai/cordis'
 import DeepSeekLlmApiExtensionRegistry, { type DeepSeekLlmApiJson } from '@deepseek-ai/dsh-deepseek-llm-api-extensions'
-import SessionStore, { SessionId, SessionSeq } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { AgentIdSchema, ChannelIdSchema, type HostLogScope } from '@nekro-nxt/contracts'
 import { describe, expect, it } from 'vitest'
 import { normalizeSessionEvents } from '../src/channel-runtime-events.ts'
+import { appendNxtRecord, nxtRecordOf } from '../src/nxt-session-records.ts'
 import { projectChannelRuntime } from '../src/channel-runtime-projection.ts'
 import type { HostLogSink } from '../src/logs/service.ts'
 import { mountRequestTiming, reuploadedImageCount, requestImageFacts } from '../src/request-timing.ts'
@@ -61,7 +62,8 @@ describe('request timing', () => {
         signal: new AbortController().signal,
         ...(purpose === undefined ? {} : { purpose }),
       })
-    const sent = () => session.snapshotEvents().filter((event) => event.type === 'nekro-nxt/request-sent')
+    const sent = () =>
+      session.snapshotEvents().flatMap((event) => nxtRecordOf(event, 'plugin:nekro-nxt/request-sent') ?? [])
     return { context, session, send, sent, writes }
   }
 
@@ -94,16 +96,18 @@ describe('request timing', () => {
   })
 
   it('shows the time before dispatch on the step', () => {
-    const events = normalizeSessionEvents([
-      { type: 'turn/start', seq: SessionSeq(1), time: 1000, data: { turn: 1 } },
-      { type: 'step/start', seq: SessionSeq(2), time: 1000, data: { turn: 1, step: 1 } },
-      {
-        type: 'nekro-nxt/request-sent',
-        seq: SessionSeq(3),
-        time: 23_000,
-        data: { turn: 1, step: 1, beforeRequestMs: 22_000, images: 12, fileImages: 12, reuploadedImages: 12 },
-      },
-    ])
+    const session = Session.create(SessionId('fixture-request-timing-projection'))
+    session.append('turn/start', { turn: 1 })
+    session.append('step/start', { turn: 1, step: 1 })
+    appendNxtRecord(session, 'plugin:nekro-nxt/request-sent', {
+      turn: 1,
+      step: 1,
+      beforeRequestMs: 22_000,
+      images: 12,
+      fileImages: 12,
+      reuploadedImages: 12,
+    })
+    const events = normalizeSessionEvents(session.snapshotEvents())
     const projection = projectChannelRuntime({
       channelId: ChannelIdSchema.parse('chn_webmain'),
       agentId: AgentIdSchema.parse('agt_observer'),

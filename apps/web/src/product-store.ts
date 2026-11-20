@@ -44,7 +44,7 @@ export function createProductStore(
     capabilityAvailability: {
       subagents: { available: true },
       webSearch: {
-        provider: 'deepseek-official',
+        provider: 'deepseek-search-api',
         available: false,
         credentialConfigured: false,
         credentialReference: 'DEEPSEEK_API_KEY',

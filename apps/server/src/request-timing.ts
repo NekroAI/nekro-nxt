@@ -3,6 +3,7 @@ import type { DeepSeekLlmApiExtensionRequest, DeepSeekLlmApiJson } from '@deepse
 import { SessionId, type Session } from '@deepseek-ai/dsh-session'
 import type { HostLogScope } from '@nekro-nxt/contracts'
 import { MODEL_RUNTIME_LOG_SOURCE } from './logs/session.js'
+import { appendNxtRecord } from './nxt-session-records.js'
 import type { HostLogSink } from './logs/service.js'
 
 /** Time from step start to request dispatch above which the host logs a warning. */
@@ -22,8 +23,8 @@ export interface RequestSentData {
 }
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    'nekro-nxt/request-sent': RequestSentData
+  interface PluginRecordMap {
+    'plugin:nekro-nxt/request-sent': RequestSentData
   }
 }
 
@@ -108,7 +109,7 @@ export function mountRequestTiming(
         reuploadedImages: reuploadedImageCount(previousImages.get(session), images),
       }
       previousImages.set(session, images)
-      session.append('nekro-nxt/request-sent', data)
+      appendNxtRecord(session, 'plugin:nekro-nxt/request-sent', data)
       if (diagnostics && (data.beforeRequestMs >= SLOW_REQUEST_DISPATCH_MS || data.reuploadedImages > 0)) {
         const scope = diagnostics.scopeOf(request.sessionId)
         diagnostics.logs.write({

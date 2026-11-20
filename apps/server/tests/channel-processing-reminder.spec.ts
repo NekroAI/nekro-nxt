@@ -212,17 +212,15 @@ describe('channel processing reminder with the assembled DSH Host', () => {
               parameters: {},
               output: { schema: { type: 'string' }, render: () => [{ type: 'text', text: 'forward completed' }] },
               async execute(_args, exec) {
-                const result = await ctx.tools.execute({
-                  callId: ToolCallId(`${exec.callId}-leaf`),
-                  rootCallId: exec.rootCallId,
-                  parent: exec.token,
-                  name: 'context_leaf',
-                  arguments: {},
-                  ...(exec.agent === undefined ? {} : { agent: exec.agent }),
+                // A standalone inner batch through the deployment's executor; its context is forwarded to this call.
+                const batch = await ctx.tools.execute({
+                  calls: [
+                    { type: 'tool-call', id: ToolCallId(`${exec.callId}-leaf`), name: 'context_leaf', arguments: '{}' },
+                  ],
                   signal: exec.signal,
                 })
-                if (result.isError) throw new Error('Leaf failed')
-                for (const message of result.additionalContexts ?? []) exec.deferContext(message)
+                if (batch.results[0]?.result.isError !== false) throw new Error('Leaf failed')
+                for (const message of batch.additionalContexts) exec.deferContext(message)
                 return 'done'
               },
             }),

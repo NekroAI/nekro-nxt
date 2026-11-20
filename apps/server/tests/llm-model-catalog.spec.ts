@@ -300,6 +300,8 @@ describe('LLM model catalog management', () => {
       const edited = await providerView(runtime, 'deepseek-official')
       expect(edited.modelsCustomized).toBe(true)
       expect(edited.models.map((model) => model.id)).toEqual(['deepseek-flash', 'deepseek-synthetic-next'])
+      // DeepSeek offers its models for selection only once its key is stored.
+      await runtime.host.setDshCredential('DEEPSEEK_API_KEY', 'synthetic-catalog-key')
       const available = await runtime.host.listAvailableLlmModels()
       expect(available.find((model) => model.id === 'deepseek-synthetic-next')).toMatchObject({
         provider: 'deepseek-official',

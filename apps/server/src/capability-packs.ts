@@ -2,8 +2,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
-import type { PromptAssembly } from '@deepseek-ai/dsh-system-prompt'
-import { defineTool, renderToolsSdk, type ToolRuntime } from '@deepseek-ai/dsh-tools'
+import type { PromptPresentation } from '@deepseek-ai/dsh-system-prompt'
+import { renderToolsSdk, type ToolSdkSchema } from '@deepseek-ai/dsh-tool-executor-ptc'
+import {
+  defineTool,
+  type ResolvedToolSet,
+  type ToolRegistrationOptions,
+  type ToolRuntime,
+} from '@deepseek-ai/dsh-tools'
 import { z } from 'zod'
 
 /**
@@ -11,11 +17,12 @@ import { z } from 'zod'
  * declarations, until the agent loads their pack with `capability_load`. Loading hands the pack's instructions and
  * declarations to the conversation as a message, so the system prompt, and the cache behind it, stays the same.
  *
- * Under run_code the declarations live in DSH's `tools:sdk` section; the `system-prompt/assemble` waterfall renders
- * that section again with DSH's own `renderToolsSdk`, minus every pack tool, loaded or not. Calling a pack tool before
- * its pack is loaded is refused by a tool guard. With direct tool calls the request's tool list carries the
- * declarations, so pack tools join it once loaded; that is only cheap on routes that can add tools mid-conversation,
- * and the caller keeps every tool resident elsewhere.
+ * Under run_code the declarations live in the PTC executor's `tools:sdk` section; the `system-prompt/assemble`
+ * waterfall renders that section again with DSH's own `renderToolsSdk`, minus every pack tool, loaded or not. Calling a
+ * pack tool before its pack is loaded is refused by a tool guard. With direct tool calls the request's tool list
+ * carries the declarations: pack tools are registered with a step condition ({@link capabilityPackRegistration}) and
+ * join a step once their pack is loaded; that is only cheap on routes that can add tools mid-conversation, and the
+ * caller keeps every tool resident elsewhere.
  */
 export interface CapabilityPack {
   /** Shown to the agent and passed back to `capability_load`, e.g. 「扩展管理」. */
@@ -52,17 +59,17 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
-type SdkSchemas = Parameters<typeof renderToolsSdk>[0]
+type SdkSchemas = ToolSdkSchema[]
 type Scope = Parameters<ToolRuntime['get']>[1]
 
 /**
- * The schemas DSH renders into `tools:sdk` for one scope (its private `sdkSchemas`): every visible tool but run_code,
- * with its output schema. Rendering them with `renderToolsSdk` gives DSH's own section text.
+ * The schemas the PTC executor renders into `tools:sdk` for one scope and step: every visible tool, with its output
+ * schema. Rendering them with `renderToolsSdk` gives DSH's own section text.
  */
-export const visibleSdkSchemas = (tools: ToolRuntime, scope: Scope): SdkSchemas =>
-  tools.schemas(scope).flatMap((schema) => {
+export const visibleSdkSchemas = (tools: ToolRuntime, scope: Scope, toolSet?: ResolvedToolSet): SdkSchemas =>
+  tools.schemas(scope, toolSet).flatMap((schema) => {
     if (schema.name === 'run_code') return []
-    const definition = tools.get(schema.name, scope)
+    const definition = tools.get(schema.name, scope, toolSet)
     return definition === undefined ? [] : [{ ...schema, output: structuredClone(definition.output.schema) }]
   })
 
@@ -114,6 +121,21 @@ const catalogOnSurface = (session: SessionView): string | undefined => {
   return digest
 }
 
+export type CapabilityLoadState = ReturnType<typeof capabilityLoadState>
+
+/**
+ * Registration options for one tool under direct tool calls: a pack tool joins a step's declarations and dispatch only
+ * while its pack is loaded for the agent taking the step. Under run_code (and for tools outside every pack) there is no
+ * condition; the SDK section and the guard of {@link mountCapabilityPacks} keep pack tools out instead.
+ */
+export const capabilityPackRegistration =
+  (packs: readonly CapabilityPack[], presentation: 'ptc' | 'native', loadState: CapabilityLoadState) =>
+  (name: string): ToolRegistrationOptions | undefined => {
+    if (presentation !== 'native') return undefined
+    const pack = packs.find((candidate) => candidate.tools.includes(name))
+    return pack === undefined ? undefined : { when: ({ agent }) => loadState.isLoaded(agent, pack.name) }
+  }
+
 /** The part of an agent that load state reads: its log and what the model still sees of it. */
 export type LoadStateAgent = { readonly session: SessionView }
 
@@ -155,6 +177,8 @@ export const mountCapabilityPacks = (
     readonly packs: readonly CapabilityPack[]
     readonly presentation: 'ptc' | 'native'
     readonly rootSessionId: string
+    /** Shared with {@link capabilityPackRegistration} when pack tools are registered with a step condition. */
+    readonly loadState?: CapabilityLoadState
     /** Told the packs any conversation of the session loads, so the next session's handoff can mention them. */
     readonly onLoad?: (packs: readonly string[]) => void
   },
@@ -166,7 +190,7 @@ export const mountCapabilityPacks = (
   let sections: readonly PromptSectionSize[] = []
   let root: Agent | undefined
 
-  const loadState = capabilityLoadState()
+  const loadState = options.loadState ?? capabilityLoadState()
   const isLoaded = loadState.isLoaded
   const availableFor = (scope: Scope): CapabilityPack[] =>
     tools.get(CAPABILITY_LOAD_TOOL, scope) === undefined
@@ -270,31 +294,31 @@ export const mountCapabilityPacks = (
     })
   }
 
-  context.on('system-prompt/assemble', async (_assembly, assembleContext, next): Promise<PromptAssembly> => {
+  context.on('system-prompt/assemble', async (_assembly, assembleContext, next): Promise<PromptPresentation> => {
     let assembly = await next()
     const scope = assembleContext.scope
     const agent = (assembleContext as { readonly agent?: Agent }).agent
-    if (packs.length > 0) {
-      if (options.presentation === 'ptc') {
-        const index = assembly.sections.findIndex((section) => section.name === 'tools:sdk' && section.text !== '')
-        const section = assembly.sections[index]
-        const schemas = visibleSdkSchemas(tools, scope)
-        // NXT runs TypeScript programs; another runtime's SDK text is left as DSH wrote it.
-        const typescript =
-          (context.get('ptcRuntime') as { readonly language?: string } | undefined)?.language === 'typescript'
-        if (section !== undefined && typescript && schemas.some((schema) => packOf.has(schema.name))) {
-          const replaced = [...assembly.sections]
-          replaced[index] = { ...section, text: renderToolsSdk(schemas.filter((schema) => !packOf.has(schema.name))) }
-          assembly = { ...assembly, sections: replaced }
+    if (packs.length > 0 && options.presentation === 'ptc') {
+      const index = assembly.sections.findIndex((section) => section.name === 'tools:sdk' && section.text !== '')
+      const section = assembly.sections[index]
+      const schemas = visibleSdkSchemas(tools, scope, assembleContext.toolSet)
+      // NXT runs TypeScript programs; another runtime's SDK text is left as DSH wrote it.
+      const runtime = context.get('ptcRuntime') as
+        { readonly language?: string; readonly programFormat?: Parameters<typeof renderToolsSdk>[1] } | undefined
+      if (
+        section !== undefined &&
+        runtime?.language === 'typescript' &&
+        schemas.some((schema) => packOf.has(schema.name))
+      ) {
+        const replaced = [...assembly.sections]
+        replaced[index] = {
+          ...section,
+          text: renderToolsSdk(
+            schemas.filter((schema) => !packOf.has(schema.name)),
+            runtime.programFormat,
+          ),
         }
-      } else if (agent !== undefined) {
-        const hidden = (name: string) => {
-          const pack = packOf.get(name)
-          return pack !== undefined && !isLoaded(agent, pack.name)
-        }
-        if (assembly.tools.some((tool) => hidden(tool.name))) {
-          assembly = { ...assembly, tools: assembly.tools.filter((tool) => !hidden(tool.name)) }
-        }
+        assembly = { ...assembly, sections: replaced }
       }
     }
     if (agent !== undefined && String(agent.id) === options.rootSessionId) {

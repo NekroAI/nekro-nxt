@@ -63,6 +63,8 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-tool-bash',
   '@deepseek-ai/dsh-tool-call-timeout-policy',
   '@deepseek-ai/dsh-tool-cordis',
+  '@deepseek-ai/dsh-tool-executor-native',
+  '@deepseek-ai/dsh-tool-executor-ptc',
   '@deepseek-ai/dsh-tool-fs',
   '@deepseek-ai/dsh-tool-fs-search',
   '@deepseek-ai/dsh-tool-pwsh',
@@ -73,7 +75,7 @@ const HOST_DSH_PACKAGES = [
   '@deepseek-ai/dsh-tools',
   '@deepseek-ai/dsh-util-values',
   '@deepseek-ai/dsh-web',
-  '@deepseek-ai/dsh-web-search-deepseek',
+  '@deepseek-ai/dsh-web-deepseek-api',
   '@deepseek-ai/dsh-working-directory',
 ] as const
 
@@ -126,8 +128,8 @@ export const DSH_BUILTIN_EXTENSION_ROSTER: readonly DshBuiltinExtensionEntry[] =
     packageName: '@deepseek-ai/dsh-web',
   },
   {
-    packageName: '@deepseek-ai/dsh-web-search-deepseek',
-    settingsNamespaces: ['web-search-deepseek'],
+    packageName: '@deepseek-ai/dsh-web-deepseek-api',
+    settingsNamespaces: ['web-deepseek-api'],
   },
   {
     packageName: '@deepseek-ai/dsh-tool-web',

@@ -1,6 +1,7 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 // Declares the `image/offload` session event.
 import type {} from '@deepseek-ai/dsh-compaction-image-offload/projection'
+import type {} from '@deepseek-ai/dsh-tool-executor-ptc/types'
 import { assistantStreamFirstTokenTime } from '@deepseek-ai/dsh-llm'
 import {
   deliveryStateFromToolResult,
@@ -11,6 +12,8 @@ import { boundedDetail, type RuntimeProjectionEvent } from './channel-runtime-pr
 import { projectTokenUsage } from './token-usage.js'
 import { ChannelEventIdSchema, type ChannelEventId, type ChannelMemoryActivity } from '@nekro-nxt/contracts'
 import type { MemoryEventData } from './memory-events.js'
+import { nxtRecordOf } from './nxt-session-records.js'
+import type {} from './request-timing.js'
 
 /**
  * Session log types that change the product runtime projection. Streaming chunks do not; request header and route
@@ -30,8 +33,8 @@ export const CHANNEL_RUNTIME_SSE_EVENT_TYPES = new Set([
   'image/offload',
   'llm/retry',
   'llm/retry-started',
-  'nekro-nxt/memory',
-  'nekro-nxt/request-sent',
+  'plugin:nekro-nxt/memory',
+  'plugin:nekro-nxt/request-sent',
   'compaction/start',
   'compaction/end',
 ])
@@ -178,18 +181,20 @@ export const normalizeSessionEvents = (
       )
       continue
     }
-    if (event.type === 'nekro-nxt/request-sent') {
+    const requestSent = nxtRecordOf(event, 'plugin:nekro-nxt/request-sent')
+    if (requestSent !== undefined) {
       result.push({
         type: 'request/sent',
-        turn: event.data.turn,
-        step: event.data.step,
-        beforeRequestMs: event.data.beforeRequestMs,
-        reuploadedImages: event.data.reuploadedImages,
+        turn: requestSent.data.turn,
+        step: requestSent.data.step,
+        beforeRequestMs: requestSent.data.beforeRequestMs,
+        reuploadedImages: requestSent.data.reuploadedImages,
       })
       continue
     }
-    if (event.type === 'nekro-nxt/memory') {
-      const activity = memoryActivity(event.data, at)
+    const memory = nxtRecordOf(event, 'plugin:nekro-nxt/memory')
+    if (memory !== undefined) {
+      const activity = memoryActivity(memory.data, at)
       if (activity !== undefined) result.push({ type: 'memory', activity })
       continue
     }

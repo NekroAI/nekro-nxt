@@ -110,7 +110,7 @@ export const productSnapshot = HostApiContracts.snapshot.response.parse({
     githubCli: { available: true },
     verificationBrowser: { available: false },
     webSearch: {
-      provider: 'deepseek-official',
+      provider: 'deepseek-search-api',
       available: false,
       credentialConfigured: false,
       credentialReference: 'DEEPSEEK_API_KEY',

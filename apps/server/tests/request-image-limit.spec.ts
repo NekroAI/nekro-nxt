@@ -165,9 +165,12 @@ describe('request image limit', () => {
 })
 
 const requestSent = (images: number, fileImages: number): SessionEvent =>
-  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- Only type and data are read.
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion -- A plugin record as DSH commits it.
   ({
-    type: 'nekro-nxt/request-sent',
+    type: 'plugin:nekro-nxt/request-sent',
+    seq: 0,
+    time: 0,
+    ignorable: true,
     data: { turn: 1, step: 1, beforeRequestMs: 0, images, fileImages, reuploadedImages: 0 },
   }) as unknown as SessionEvent
 

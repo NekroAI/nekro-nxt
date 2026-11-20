@@ -31,6 +31,8 @@ import { extensionVersions, lineageGraph, revisionProtections } from '../src/ext
 import { HostLogService } from '../src/logs/service.js'
 import { createExtensionRevisionExport } from '../src/host-route-support.js'
 import { extensionVerification } from './fixtures/extension-verification.js'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import { executeToolCall } from './fixtures/tool-call.js'
 
 const directories: string[] = []
 
@@ -1019,9 +1021,10 @@ describe('extension autonomy', () => {
       }).find((tool) => tool.name === 'nekro_nxt_extension_list')!
       await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
       await context.plugin(ToolRuntime)
+      await context.plugin(NativeToolExecutor)
       context.tools.register(list)
       const execute = () =>
-        context.tools.execute({
+        executeToolCall(context, {
           callId: ToolCallId('catalog-request'),
           name: list.name,
           arguments: {},

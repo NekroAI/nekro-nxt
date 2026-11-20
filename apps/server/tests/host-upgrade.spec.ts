@@ -24,7 +24,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { startNekroServer, type NekroServerHandle } from '../src/main.js'
-import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { restoreUpgradeBackup, verifyUpgradeBackup } from '../src/upgrade-backup.js'
 
 const directories: string[] = []
@@ -403,7 +403,7 @@ const storedSession = (dataRoot: string, channelId: string) =>
 const readSession = async (root: string, id: string) => {
   const context = new Context()
   try {
-    await context.plugin(NekroJsonlSessionPersistence, { root })
+    await context.plugin(JsonlSessionPersistence, { root })
     const handle = await context.sessionPersistence.open(SessionId(id), 'read')
     try {
       return (await handle.read()).events

@@ -79,7 +79,14 @@ export class DshPluginQuiescenceError extends Error {
 }
 
 const disposalObservedRoots = new WeakSet<Context>()
-const failedDisposalFibers = new WeakSet<Fiber>()
+/**
+ * Fibers whose resource release failed, keyed by their `provisions` set. The Fiber returned by `ctx.plugin()` or a
+ * Loader entry can be a tracing proxy of the one Cordis names in its log message, and the uid is cleared once
+ * disposal ends; the fiber's own provision set is the same object either way.
+ */
+const failedDisposalFibers = new WeakSet<object>()
+const sameFiber = (a: Fiber, b: Fiber): boolean => a === b || a.provisions === b.provisions
+const hasFailedDisposal = (fiber: Fiber): boolean => failedDisposalFibers.has(fiber.provisions)
 const FIBER_UNLOADING: FiberState = 5
 
 /** Retain rollback-disposal failures that Cordis logs before an unsuccessful mount settles. */
@@ -95,7 +102,7 @@ export function observeDshPluginDisposal(context: Context): void {
       const visited = new Set<Fiber>()
       while (fiber && !visited.has(fiber)) {
         visited.add(fiber)
-        failedDisposalFibers.add(fiber)
+        failedDisposalFibers.add(fiber.provisions)
         fiber = fiber.parent.fiber
       }
     },
@@ -103,7 +110,7 @@ export function observeDshPluginDisposal(context: Context): void {
 }
 
 export function assertDshPluginDisposalHealthy(context: Context): void {
-  if (failedDisposalFibers.has(context.fiber)) {
+  if (hasFailedDisposal(context.fiber)) {
     throw new DshPluginQuiescenceError(new Error('A plugin resource release failed in this context.'))
   }
 }
@@ -120,7 +127,7 @@ export async function disposeDshPluginFiber(context: Context, fiber: Fiber): Pro
       let owner = message.fiber?.deref()
       const visited = new Set<Fiber>()
       while (owner && !visited.has(owner)) {
-        if (owner === fiber) {
+        if (sameFiber(owner, fiber)) {
           failures.push(new Error('DSH plugin emitted an error during disposal.'))
           break
         }
@@ -137,7 +144,7 @@ export async function disposeDshPluginFiber(context: Context, fiber: Fiber): Pro
         timeout = setTimeout(() => reject(new Error('DSH plugin disposal did not settle within 30 seconds.')), 30_000)
       }),
     ])
-    if (failures.length > 0 || failedDisposalFibers.has(fiber))
+    if (failures.length > 0 || hasFailedDisposal(fiber))
       throw new AggregateError(failures, 'DSH plugin disposal reported errors.')
   } catch (cause) {
     throw new DshPluginQuiescenceError(cause)

@@ -12,7 +12,7 @@ import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { NekroRuntime } from '../src/bootstrap.js'
 import { ExtensionGovernanceTools } from '../src/extension-governance/tool-port.js'
-import { NekroJsonlSessionPersistence } from '../src/dsh-session-persistence.js'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { projectHistoryEntry } from '../src/host-route-support.js'
 import { createNekroHostApi } from '../src/host-api.js'
 import { DynamicAuthoringRuntime, preflightNekroNxtAuthoringDefinition } from '../src/dynamic-authoring-runtime.js'
@@ -165,7 +165,7 @@ describe('dynamic authoring closed loop', () => {
     }
     const reader = new Context()
     try {
-      await reader.plugin(NekroJsonlSessionPersistence, { root: path.join(directory, 'dsh', 'sessions') })
+      await reader.plugin(JsonlSessionPersistence, { root: path.join(directory, 'dsh', 'sessions') })
       const read = async (id: string) => {
         const handle = await reader.sessionPersistence.open(SessionId(id), 'read')
         try {

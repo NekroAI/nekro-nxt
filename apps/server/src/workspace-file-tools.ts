@@ -14,7 +14,7 @@ import {
   SEARCH_TIMEOUT_MS,
   toWorkdirRelative,
 } from '@deepseek-ai/dsh-tool-fs-search'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, type ToolDefinition, type ToolRegistrationOptions } from '@deepseek-ai/dsh-tools'
 import { createTwoFilesPatch } from 'diff'
 import { Unzip, UnzipInflate, Zip, ZipDeflate, type UnzipFile } from 'fflate'
 import { createHash, randomBytes } from 'node:crypto'
@@ -470,10 +470,19 @@ const text = (value: string) => ({ text: value })
 
 const pathParameter = (description: string) => ({ type: 'string' as const, required: true as const, description })
 
-/** Registers the tools in a context that has `workingDirectory`, `subprocess`, `systemPrompt` and `tools`. */
-export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): void => {
+/**
+ * Registers the tools in a context that has `workingDirectory`, `subprocess`, `systemPrompt` and `tools`.
+ * `registration` supplies each tool's registration options (a capability pack's step condition); DSH's own grep
+ * registers itself without one.
+ */
+export const mountWorkspaceFileTools = (
+  ctx: Context,
+  scope: FileToolScope,
+  registration?: (name: string) => ToolRegistrationOptions | undefined,
+): void => {
   const relativeNote = '路径相对你的工作区。'
-  ctx.tools.register(
+  const register = (tool: ToolDefinition): (() => void) => ctx.tools.register(tool, registration?.(tool.name))
+  register(
     defineTool({
       name: 'move',
       description: `移动文件或目录，也用来改名。目标已经存在时不会覆盖。${relativeNote}`,
@@ -485,7 +494,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       },
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'copy',
       description: `复制文件或目录。目标已经存在时不会覆盖；最多 ${FILE_TOOL_MAX_ENTRIES} 个文件、${FILE_TOOL_MAX_BYTES / 1024 / 1024} MB。${relativeNote}`,
@@ -497,7 +506,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       },
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'delete',
       description: `删除文件或目录。删掉的内容先放进工作区的 ${TRASH_DIRECTORY}/，${TRASH_DAYS} 天后自动清理，误删时可以用 move 移回原处；删除 ${TRASH_DIRECTORY}/ 里的内容则是彻底删除。${relativeNote}`,
@@ -514,7 +523,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       },
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'make_dir',
       description: `新建目录，缺少的上级目录一并建好。${relativeNote}`,
@@ -523,7 +532,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       execute: async (args) => text(`已新建目录 ${(await makeDirectory(scope, args.path)).path}。`),
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'file_info',
       description: `查看文件或目录的类型、大小、修改时间；文件还给出 SHA-256，可用来核对两个文件是否相同。${relativeNote}`,
@@ -532,7 +541,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       execute: async (args) => text(JSON.stringify(await fileInfo(scope, args.path))),
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'diff',
       description: `逐行比较两个文本文件（每个最多 1 MB），返回统一差异格式。${relativeNote}`,
@@ -544,7 +553,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       },
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'zip',
       description: `把文件或目录压缩成 zip，符号链接不打包。最多 ${FILE_TOOL_MAX_ENTRIES} 个文件、${FILE_TOOL_MAX_BYTES / 1024 / 1024} MB。${relativeNote}`,
@@ -558,7 +567,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
       },
     }),
   )
-  ctx.tools.register(
+  register(
     defineTool({
       name: 'unzip',
       description: `解压 zip 到一个新目录（目录不能已经存在）。解压后最多 ${FILE_TOOL_MAX_ENTRIES} 个文件、${FILE_TOOL_MAX_BYTES / 1024 / 1024} MB；会写到目录以外的条目会让解压停止。${relativeNote}`,
@@ -617,7 +626,7 @@ export const mountWorkspaceFileTools = (ctx: Context, scope: FileToolScope): voi
     },
     presentCall: presentGlobCall,
   })
-  ctx.tools.register(glob)
+  register(glob)
   applyGrepTool(ctx, {
     maxMatches: GREP_MAX_MATCHES,
     maxLineBytes: GREP_MAX_LINE_BYTES,

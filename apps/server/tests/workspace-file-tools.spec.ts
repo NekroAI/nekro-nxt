@@ -33,6 +33,8 @@ import {
   type FileToolScope,
 } from '../src/workspace-file-tools.ts'
 import { mountDevelopmentCapabilities } from '../src/index.ts'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import { executeToolCall } from './fixtures/tool-call.js'
 
 const directories: string[] = []
 afterEach(() => {
@@ -197,11 +199,12 @@ describe('finding and searching files', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjections)
     await ctx.plugin(LocalSubprocessRuntime)
     mountWorkspaceFileTools(ctx, scope)
     const run = async (name: string, args: Record<string, unknown>) => {
-      const result = await ctx.tools.execute({
+      const result = await executeToolCall(ctx, {
         callId: ToolCallId(`${name}-call`),
         name,
         arguments: args,
@@ -250,6 +253,7 @@ describe('who gets the file tools', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjections)
     await mountDevelopmentCapabilities(
       ctx,

@@ -1,6 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { CordisDynamicPluginId, CordisDynamicPackageId } from '@deepseek-ai/dsh-cordis-host-runner'
-import { defineTool, type ToolExecution } from '@deepseek-ai/dsh-tools'
+import {
+  defineTool,
+  type ToolDefinition,
+  type ToolExecution,
+  type ToolRegistrationOptions,
+} from '@deepseek-ai/dsh-tools'
 import { parseJsonValue } from '@nekro-nxt/contracts'
 import { z } from 'zod'
 import type { NekroNxtDynamicCordisRunner } from './dynamic-authoring-runtime.js'
@@ -14,13 +19,17 @@ export function mountDynamicCordisTools(
     readonly runsWithoutAsking?: () => boolean
     /** A chat platform channel, where the Host posts the commands that let a waiting candidate run. */
     readonly chatChannel?: boolean
+    /** Each tool's registration options (a capability pack's step condition). */
+    readonly registration?: (name: string) => ToolRegistrationOptions | undefined
   } = {},
 ): void {
+  const register = (tool: ToolDefinition): (() => void) =>
+    context.tools.register(tool, options.registration?.(tool.name))
   const agentFor = (execution: ToolExecution) => {
     if (!execution.agent) throw new Error('动态扩展操作需要当前智能体。')
     return runner.resolveDynamicAuthoringOwner(execution.agent)
   }
-  context.tools.register(
+  register(
     defineTool({
       name: 'cordis_inspect_self',
       description: '查看当前智能体拥有的临时扩展、候选版本和运行状态。',
@@ -40,7 +49,7 @@ export function mountDynamicCordisTools(
       },
     }),
   )
-  context.tools.register(
+  register(
     defineTool({
       name: 'cordis_define',
       description:
@@ -83,7 +92,7 @@ export function mountDynamicCordisTools(
       },
     }),
   )
-  context.tools.register(
+  register(
     defineTool({
       name: 'cordis_run',
       description: '运行或更新已经定义的精确动态扩展版本。运行不等于保存或启用；客户端代码遵循当前任务的审批规则。',
@@ -119,7 +128,7 @@ export function mountDynamicCordisTools(
     }),
   )
   for (const action of ['stop', 'undefine'] as const)
-    context.tools.register(
+    register(
       defineTool({
         name: `cordis_${action}`,
         description:
