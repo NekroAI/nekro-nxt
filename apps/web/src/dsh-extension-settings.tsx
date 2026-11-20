@@ -1248,9 +1248,7 @@ function NamespaceEditor({
             <span>网页内容来自外部，属于不可信输入。</span>
             <span>
               默认限制
-              <InfoTip label="网页搜索默认限制">
-                每次请求最多搜索 2 次、每次最多返回 5 条结果、搜索 60 秒超时。
-              </InfoTip>
+              <InfoTip label="网页搜索默认限制">每次请求最多搜索 2 次、每次最多返回 5 条结果、搜索 60 秒超时。</InfoTip>
             </span>
           </span>
         </Banner>
