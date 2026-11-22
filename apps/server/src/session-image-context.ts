@@ -149,6 +149,13 @@ export const DshImageMediaTypeSchema = z.enum(DSH_IMAGE_MEDIA_TYPES)
 /** Long side of a picture an extension tool returns at high detail. */
 export const TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE = 2048
 
+/**
+ * Long side of a picture sent at auto detail. A provider's own target is its single-image limit, but providers
+ * refuse larger pictures once one request carries many of them (Anthropic: 2000 px past 20 images), and one such
+ * picture in a long channel history then fails every later request.
+ */
+export const REQUEST_IMAGE_MAX_SIDE = 2000
+
 /** `high`: an extension tool picture at high detail, at most {@link TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE} on the long side. */
 export type AttachmentImageDetail = EffectiveImageDetail | 'high'
 
@@ -268,11 +275,12 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     signal?.throwIfAborted()
     const { ref, decoded } = requireNekroImageReference(input)
     const side =
-      decoded.detail === 'low' ? 512 : decoded.detail === 'high' ? TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE : undefined
-    const effectivePolicy =
-      side === undefined
-        ? policy
-        : { ...policy, width: Math.min(policy.width, side), height: Math.min(policy.height, side) }
+      decoded.detail === 'low'
+        ? 512
+        : decoded.detail === 'high'
+          ? TOOL_IMAGE_HIGH_DETAIL_MAX_SIDE
+          : REQUEST_IMAGE_MAX_SIDE
+    const effectivePolicy = { ...policy, width: Math.min(policy.width, side), height: Math.min(policy.height, side) }
     const stored = await this.readImage(ref, signal)
     const version = await stillRequestImage(
       await readRequestImageFile(this.requestImageRoot, stored, effectivePolicy, signal),

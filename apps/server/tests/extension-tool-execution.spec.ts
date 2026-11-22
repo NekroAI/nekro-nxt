@@ -212,7 +212,7 @@ describe('tool result image detail', () => {
     ])
   })
 
-  it('sends high-detail pictures at most 2048 px on the long side and low ones at 512', async () => {
+  it('sends high-detail pictures at most 2048 px on the long side, auto ones at 2000 and low ones at 512', async () => {
     const root = await temporary('nxt-high-detail-')
     const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
     try {
@@ -234,8 +234,9 @@ describe('tool result image detail', () => {
       expect([highRequest.width, highRequest.height]).toEqual([2048, 1024])
       const lowRequest = await store.readImageRequest(await store.refForAsset(asset, undefined, 'low'), target)
       expect(Math.max(lowRequest.width, lowRequest.height)).toBe(512)
+      // A provider target above the many-image limit no longer lets a large picture through at full size.
       const autoRequest = await store.readImageRequest(await store.refForAsset(asset), target)
-      expect(autoRequest.width).toBe(3000)
+      expect([autoRequest.width, autoRequest.height]).toEqual([2000, 1000])
     } finally {
       database.close()
     }
