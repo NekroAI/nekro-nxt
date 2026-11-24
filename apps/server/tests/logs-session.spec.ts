@@ -283,6 +283,102 @@ describe('session operational logs', () => {
     f.result({ name: 'ToolError', code: 'FAILED' }, 'unfinished')
     expect(f.write.mock.calls[3]![0].details).not.toHaveProperty('durationMs')
   })
+  it('records step count and waiting phase when a turn is cancelled mid-model or mid-tool', () => {
+    const f = fixture()
+    // Cancelled while waiting on the model in step 2
+    f.emit('turn/start', { turn: 1 }, 10000)
+    f.emit('step/start', { turn: 1, step: 1 }, 10010)
+    f.stream({ type: 'start', turn: 1, step: 1, attemptId: LlmAttemptId('a1'), revision: 1 })
+    f.emit(
+      'assistant/message',
+      {
+        turn: 1,
+        step: 1,
+        message: {
+          id: MessageId('m1'),
+          role: 'assistant',
+          content: [],
+          source: { kind: 'model', provider: 'demo', model: 'demo-model' },
+        },
+        stream: [{ type: 'chunk', time: 11000, chunk: { type: 'finish', reason: { kind: 'stop' } } }],
+      },
+      11000,
+    )
+    f.emit('step/start', { turn: 1, step: 2 }, 11050)
+    vi.setSystemTime(11100)
+    f.stream({ type: 'start', turn: 1, step: 2, attemptId: LlmAttemptId('a2'), revision: 1 })
+    vi.setSystemTime(35100)
+    f.stream({
+      type: 'end',
+      attemptId: LlmAttemptId('a2'),
+      revision: 1,
+      index: 0,
+      outcome: { kind: 'abandoned' },
+    })
+    f.emit(
+      'turn/end',
+      { turn: 1, reason: { kind: 'aborted', reason: { kind: 'hook', reason: 'stopped-by-administrator' } } },
+      35150,
+    )
+    expect(f.write.mock.calls[0]![0]).toMatchObject({
+      level: 'info',
+      details: {
+        turn: 1,
+        steps: 2,
+        durationMs: 25150,
+        outcome: 'aborted',
+        cancelCause: 'hook',
+        reason: 'stopped-by-administrator',
+        lastPhase: 'model',
+        phaseDurationMs: 24000,
+      },
+    })
+    expect(f.write.mock.calls[0]![0].details).not.toHaveProperty('activeTools')
+
+    // Cancelled while waiting on a tool in turn 2
+    f.emit('turn/start', { turn: 2 }, 40000)
+    f.emit('step/start', { turn: 2, step: 1 }, 40010)
+    f.emit(
+      'tool/call',
+      { callId: ToolCallId('slow-1'), name: 'slow_tool', arguments: 'PRIVATE_ARGS', turn: 2, step: 1 },
+      41000,
+    )
+    f.emit(
+      'tool/result',
+      {
+        turn: 2,
+        step: 1,
+        message: {
+          role: 'tool',
+          toolCallId: ToolCallId('slow-1'),
+          id: MessageId('res-slow-1'),
+          source: { kind: 'tool', callId: ToolCallId('slow-1') },
+          isError: true,
+          content: [{ type: 'text', text: 'PRIVATE_RESULT' }],
+        },
+        error: { name: 'AbortError', code: 'ABORTED' },
+      },
+      56000,
+    )
+    f.emit(
+      'turn/end',
+      { turn: 2, reason: { kind: 'aborted', reason: { kind: 'hook', reason: 'stopped-by-administrator' } } },
+      56050,
+    )
+    expect(f.write.mock.calls[1]![0]).toMatchObject({
+      level: 'info',
+      details: {
+        turn: 2,
+        steps: 1,
+        durationMs: 16050,
+        outcome: 'aborted',
+        lastPhase: 'tool',
+        activeTools: ['slow_tool'],
+        phaseDurationMs: 15000,
+      },
+    })
+    expect(JSON.stringify(f.write.mock.calls)).not.toContain('PRIVATE_')
+  })
   it('ignores historical and foreign events and detaches on disposal', async () => {
     const f = fixture()
     const data = { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN', message: '失败' } } } as const

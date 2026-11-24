@@ -49,12 +49,23 @@ describe('finish_channel_turn waiting-for-more (Decision 2026-10-31 R2)', () => 
       'no-response-needed',
       'cannot-respond',
     ])
+    expect(without.parameters).toHaveProperty('properties.outcome.description')
     expect(without.parameters).not.toHaveProperty('properties.seconds')
+    expect(without.description).toContain('outcome')
     expect(without.description).not.toContain('waiting-for-more')
+    expect(JSON.stringify(without.parameters)).not.toContain('waiting-for-more')
     const request: ChannelWaitRequester = () => ({ accepted: true, seconds: 20 })
-    expect(finishChannelTurnTool(() => false, { episodeId, request }).parameters).toHaveProperty(
-      'properties.outcome.enum',
-      ['response-complete', 'no-response-needed', 'cannot-respond', 'waiting-for-more'],
+    const withWait = finishChannelTurnTool(() => false, { episodeId, request })
+    expect(withWait.parameters).toHaveProperty('properties.outcome.enum', [
+      'response-complete',
+      'no-response-needed',
+      'cannot-respond',
+      'waiting-for-more',
+    ])
+    expect(withWait.description).toContain('outcome')
+    expect(withWait.parameters).toHaveProperty(
+      'properties.outcome.description',
+      '结束方式：response-complete、no-response-needed、cannot-respond 或 waiting-for-more。',
     )
   })
 

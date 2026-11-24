@@ -14,6 +14,15 @@ interface SessionLogLabels {
 /** Model-call failures and their underlying causes share this source, so they group together. */
 export const MODEL_RUNTIME_LOG_SOURCE = { kind: 'system', id: 'model-runtime', name: '模型调用' } as const
 
+interface TurnProgress {
+  steps: number
+  lastPhase?: 'preparing' | 'model' | 'tool' | undefined
+  phaseStartedAt?: number | undefined
+  phaseDurationMs?: number | undefined
+  activeTools: Map<string, { name: string; time: number }>
+  abortedTools: Set<string>
+}
+
 /** Read only diagnostic fields, never messages, arguments, tool results or replay metadata. */
 export function attachSessionLogs(
   context: Context,
@@ -22,6 +31,7 @@ export function attachSessionLogs(
   labels: SessionLogLabels = {},
 ): void {
   const starts = new Map<string, { time: number; tool?: string; turn?: number }>()
+  const turns = new Map<number, TurnProgress>()
   const attachedAt = Date.now()
   const modelName = [labels.provider, labels.model].filter(Boolean).join('/')
   const modelLabel = modelName ? `模型 ${modelName}` : '模型'
@@ -41,9 +51,40 @@ export function attachSessionLogs(
       ...(start === undefined ? {} : { durationMs: Math.max(0, time - start.time) }),
     }
   }
+  const turnProgress = (turn: number): TurnProgress => {
+    let progress = turns.get(turn)
+    if (progress === undefined) {
+      if (turns.size >= 128) turns.delete(turns.keys().next().value!)
+      progress = { steps: 0, activeTools: new Map(), abortedTools: new Set() }
+      turns.set(turn, progress)
+    }
+    return progress
+  }
+  const modelAttempts = new Map<string, { turn: number; step: number; startedAt: number }>()
   context.on('agent/assistant-stream', ({ agent, frame }) => {
-    if (String(agent.id) !== scope.sessionId || frame.type !== 'start') return
-    remember(`model:${frame.turn}:${frame.step}`, Date.now(), undefined, frame.turn)
+    if (String(agent.id) !== scope.sessionId) return
+    if (frame.type === 'start') {
+      const now = Date.now()
+      remember(`model:${frame.turn}:${frame.step}`, now, undefined, frame.turn)
+      if (modelAttempts.size >= 256) modelAttempts.delete(modelAttempts.keys().next().value!)
+      modelAttempts.set(String(frame.attemptId), { turn: frame.turn, step: frame.step, startedAt: now })
+      const progress = turnProgress(frame.turn)
+      progress.steps = Math.max(progress.steps, frame.step)
+      progress.lastPhase = 'model'
+      progress.phaseStartedAt = now
+      progress.phaseDurationMs = undefined
+      return
+    }
+    if (frame.type === 'end') {
+      const attempt = modelAttempts.get(String(frame.attemptId))
+      modelAttempts.delete(String(frame.attemptId))
+      if (attempt !== undefined && frame.outcome.kind === 'abandoned') {
+        const progress = turns.get(attempt.turn)
+        if (progress?.lastPhase === 'model') {
+          progress.phaseDurationMs = Math.max(0, Date.now() - attempt.startedAt)
+        }
+      }
+    }
   })
   context.on('session/event', (session, event) => {
     if (String(session.id) !== scope.sessionId) return
@@ -52,6 +93,7 @@ export function attachSessionLogs(
     if (
       event.type !== 'turn/start' &&
       event.type !== 'turn/end' &&
+      event.type !== 'step/start' &&
       event.type !== 'tool/call' &&
       event.type !== 'tool/result' &&
       event.type !== 'tool/ptc-dispatch-start' &&
@@ -64,10 +106,36 @@ export function attachSessionLogs(
     switch (event.type) {
       case 'turn/start':
         remember(`turn:${event.data.turn}`, timestamp, undefined, event.data.turn)
+        turns.set(event.data.turn, {
+          steps: 0,
+          lastPhase: 'preparing',
+          phaseStartedAt: timestamp,
+          activeTools: new Map(),
+          abortedTools: new Set(),
+        })
         return
-      case 'tool/call':
+      case 'step/start': {
+        const progress = turnProgress(event.data.turn)
+        progress.steps = Math.max(progress.steps, event.data.step)
+        progress.lastPhase = 'preparing'
+        progress.phaseStartedAt = timestamp
+        progress.phaseDurationMs = undefined
+        progress.activeTools.clear()
+        progress.abortedTools.clear()
+        return
+      }
+      case 'tool/call': {
         remember(`tool:${event.data.callId}`, timestamp, event.data.name, event.data.turn)
+        const progress = turnProgress(event.data.turn)
+        progress.steps = Math.max(progress.steps, event.data.step)
+        if (progress.lastPhase !== 'tool' || progress.activeTools.size === 0) {
+          progress.lastPhase = 'tool'
+          progress.phaseStartedAt = timestamp
+          progress.phaseDurationMs = undefined
+        }
+        progress.activeTools.set(String(event.data.callId), { name: event.data.name, time: timestamp })
         return
+      }
       case 'tool/ptc-dispatch-start':
         remember(`ptc:${event.data.subCallId}`, timestamp, event.data.name)
         return
@@ -79,8 +147,24 @@ export function attachSessionLogs(
         const timing = finish(key, timestamp)
         const error = event.data.error
         const failed = event.type === 'tool/result' ? event.data.message.isError === true : event.data.isError
-        if (!failed && !error) return
         const cancelled = error?.code === 'ABORTED' || error?.code === 'ABORTED_BEFORE_DISPATCH'
+        if (event.type === 'tool/result') {
+          const progress = turns.get(event.data.turn)
+          if (progress !== undefined) {
+            progress.steps = Math.max(progress.steps, event.data.step)
+            const callId = String(event.data.message.toolCallId)
+            const active = progress.activeTools.get(callId)
+            progress.activeTools.delete(callId)
+            if (cancelled) {
+              const abortedName = active?.name ?? timing.tool
+              if (abortedName !== undefined) progress.abortedTools.add(abortedName)
+              if (progress.phaseStartedAt !== undefined) {
+                progress.phaseDurationMs = Math.max(0, timestamp - progress.phaseStartedAt)
+              }
+            }
+          }
+        }
+        if (!failed && !error) return
         if (cancelled) return
         const tool = event.type === 'tool/ptc-dispatch' ? event.data.name : timing.tool
         const diagnostic = [error?.code, error?.reason].filter(Boolean).join(' · ') || '未提供独立错误详情'
@@ -107,6 +191,13 @@ export function attachSessionLogs(
       case 'assistant/attempt': {
         const key = `model:${event.data.turn}:${event.data.step}`
         const timing = finish(key, timestamp)
+        const progress = turns.get(event.data.turn)
+        if (progress !== undefined) {
+          progress.steps = Math.max(progress.steps, event.data.step)
+          if (progress.lastPhase === 'model' && timing.durationMs !== undefined) {
+            progress.phaseDurationMs = timing.durationMs
+          }
+        }
         for (const record of event.data.stream) {
           if (record.type !== 'chunk' || record.chunk.type !== 'finish') continue
           const reason = record.chunk.reason
@@ -140,10 +231,23 @@ export function attachSessionLogs(
       case 'turn/end': {
         const { turn, reason } = event.data
         const timing = finish(`turn:${turn}`, timestamp)
+        const progress = turns.get(turn)
+        turns.delete(turn)
+        for (const [attemptId, attempt] of modelAttempts) if (attempt.turn === turn) modelAttempts.delete(attemptId)
         // PTC has no turn field; all outstanding calls belong to the closing active turn.
         for (const [key, start] of starts) if (start.turn === turn || key.startsWith('ptc:')) starts.delete(key)
         if (reason.kind === 'completed' || reason.kind === 'forked') return
         const failure = reason.kind === 'error' ? reason.error : undefined
+        const pendingTools =
+          progress === undefined
+            ? []
+            : [...new Set([...[...progress.activeTools.values()].map((item) => item.name), ...progress.abortedTools])]
+        const phaseDurationMs =
+          progress === undefined
+            ? undefined
+            : (progress.phaseDurationMs ??
+              (progress.phaseStartedAt === undefined ? undefined : Math.max(0, timestamp - progress.phaseStartedAt)))
+        const interruptedOrAborted = reason.kind === 'aborted' || reason.kind === 'interrupted'
         logs.write({
           level: reason.kind === 'aborted' ? 'info' : failure ? 'error' : 'warn',
           message:
@@ -159,7 +263,13 @@ export function attachSessionLogs(
             ...labels,
             ...timing,
             turn,
+            ...(progress !== undefined && progress.steps > 0 ? { steps: progress.steps } : {}),
             outcome: reason.kind,
+            ...(interruptedOrAborted && progress?.lastPhase !== undefined ? { lastPhase: progress.lastPhase } : {}),
+            ...(interruptedOrAborted && phaseDurationMs !== undefined ? { phaseDurationMs } : {}),
+            ...(interruptedOrAborted && progress?.lastPhase === 'tool' && pendingTools.length > 0
+              ? { activeTools: pendingTools }
+              : {}),
             ...(failure
               ? {
                   reason: failure.message,

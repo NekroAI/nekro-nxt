@@ -1853,11 +1853,11 @@ export const finishChannelTurnTool = (
   defineTool({
     name: 'finish_channel_turn',
     description: [
-      '结束这一轮，放在最后调用。事情做完、话也回完了用 response-complete；你说了要接着去做的事，或者刚失败的操作你自己还能补救，就先去做，不要结束。不需要回复用 no-response-needed，做不到或不能做用 cannot-respond。在等别人批准或回话时，reason 里写清楚在等什么。',
+      '结束这一轮，放在最后调用。用 outcome 说明结束方式：事情做完、话也回完了填 response-complete；你说了要接着去做的事，或者刚失败的操作你自己还能补救，就先去做，不要结束；不需要回复填 no-response-needed；做不到或不能做填 cannot-respond。在等别人批准或回话时，reason 里写清楚在等什么。',
       ...(wait === undefined
         ? []
         : [
-            '对方明显话还没说完时用 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。',
+            '对方明显话还没说完时，outcome 填 waiting-for-more，并在 seconds 里写他停下来多少秒后再叫你（一般 10–30）；到时你必须回复他。',
           ]),
       'reason 写真实原因，只有后台看得到，不会发到频道里。',
     ].join(''),
@@ -1869,6 +1869,10 @@ export const finishChannelTurnTool = (
             ? FINISH_OUTCOMES.filter((outcome) => outcome !== 'waiting-for-more')
             : [...FINISH_OUTCOMES],
         required: true,
+        description:
+          wait === undefined
+            ? '结束方式：response-complete、no-response-needed 或 cannot-respond。'
+            : '结束方式：response-complete、no-response-needed、cannot-respond 或 waiting-for-more。',
       },
       reason: { type: 'string', required: true, description: '原因，1–500 字。' },
       ...(wait === undefined
