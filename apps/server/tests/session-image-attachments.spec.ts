@@ -296,6 +296,34 @@ describe('NekroAssetAttachmentStore', () => {
       database.close()
     }
   })
+
+  it('reads each picture once for its size and reuses it on later steps', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'nxt-image-size-cache-'))
+    roots.push(root)
+    const database = await openMigratedCoreDatabase(':memory:')
+    try {
+      const repository = new SqliteCoreRepository(database)
+      const assetService = new AssetService(repository, path.join(root, 'assets'))
+      const { asset } = await assetService.prepare({
+        bytes: await sharp({ create: { width: 3, height: 2, channels: 3, background: '#4a7' } })
+          .png()
+          .toBuffer(),
+      })
+      const store = new NekroAssetAttachmentStore(new Context(), {
+        assets: repository,
+        assetService,
+        requestImageRoot: path.join(root, 'request-images'),
+      })
+      const first = await store.refForAsset(asset)
+      await rm(assetService.blobPath(asset))
+      await expect(store.refForAsset(asset, undefined, 'low')).resolves.toMatchObject({
+        width: first.width,
+        height: first.height,
+      })
+    } finally {
+      database.close()
+    }
+  })
 })
 
 describe('request images', () => {

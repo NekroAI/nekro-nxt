@@ -48,7 +48,7 @@ import type {
   ChannelEventRecord,
 } from '@nekro-nxt/core'
 import { createHash } from 'node:crypto'
-import { open, readFile } from 'node:fs/promises'
+import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import sharp from 'sharp'
 import { z } from 'zod'
@@ -202,6 +202,8 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
   readonly assets: AssetAccessRepository
   readonly assetService: AssetService
   readonly requestImageRoot: string
+  /** Image size by content digest. History projection asks for the same pictures on every step. */
+  private readonly dimensionCache = new Map<string, { readonly width?: number; readonly height?: number }>()
 
   constructor(
     context: Context,
@@ -226,6 +228,25 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     }
   }
 
+  // Plain private members: Cordis hands out a Proxy of this service, which cannot reach `#` fields.
+  private async dimensions(asset: AssetRecord): Promise<{ readonly width?: number; readonly height?: number }> {
+    const cached = this.dimensionCache.get(asset.contentDigest)
+    if (cached) return cached
+    if (!Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) throw new Error('图片资源大小无效。')
+    if (asset.byteSize > this.imageLimits.maxImageBytes) {
+      throw new Error(`图片超过 ${this.imageLimits.maxImageBytes / 1024 / 1024} MB，无法读取。`)
+    }
+    // sharp given a file path keeps the blob open on Windows after it finishes; a buffer leaves no handle behind.
+    const data = await readFile(this.assetService.blobPath(asset))
+    if (data.byteLength !== asset.byteSize) throw new Error('图片文件大小与资源记录不一致。')
+    const { width, height } = await sharp(data).metadata()
+    const dimensions = { width, height }
+    const oldest = this.dimensionCache.keys().next()
+    if (this.dimensionCache.size >= 4096 && !oldest.done) this.dimensionCache.delete(oldest.value)
+    this.dimensionCache.set(asset.contentDigest, dimensions)
+    return dimensions
+  }
+
   saveImage(): Promise<ImageAttachmentRef> {
     return Promise.reject(new Error('NekroNxt images must enter through Asset Service before DSH projection.'))
   }
@@ -236,25 +257,7 @@ export class NekroAssetAttachmentStore extends AttachmentStore {
     detail: 'low' | 'auto' | 'high' = 'auto',
   ): Promise<ImageAttachmentRef> {
     const mediaType = DshImageMediaTypeSchema.parse(asset.mediaType)
-    if (!Number.isSafeInteger(asset.byteSize) || asset.byteSize <= 0) throw new Error('图片资源大小无效。')
-    if (asset.byteSize > this.imageLimits.maxImageBytes) throw new Error('图片超过 128 MB，无法读取。')
-    const file = await open(this.assetService.blobPath(asset), 'r')
-    let data: Buffer
-    try {
-      const info = await file.stat()
-      if (!info.isFile() || info.size !== asset.byteSize) throw new Error('图片文件大小与资源记录不一致。')
-      data = Buffer.allocUnsafe(info.size)
-      let offset = 0
-      while (offset < data.byteLength) {
-        const { bytesRead } = await file.read(data, offset, data.byteLength - offset, offset)
-        if (bytesRead === 0) throw new Error('图片文件大小与资源记录不一致。')
-        offset += bytesRead
-      }
-    } finally {
-      await file.close()
-    }
-    // File-backed libvips metadata can keep a Windows blob locked after completion.
-    const metadata = await sharp(data).metadata()
+    const metadata = await this.dimensions(asset)
     if (!metadata.width || !metadata.height) throw new Error(`Asset image dimensions are unavailable: ${asset.id}`)
     return {
       attachmentId: nekroImageAttachmentId(asset.id, effectiveImageDetail(detail)),
