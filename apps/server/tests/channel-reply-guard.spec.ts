@@ -104,12 +104,16 @@ describe('channel processing reminder event projection', () => {
     }
   })
 
-  it.each(['failed', 'unknown', 'cancelled'])('does not count %s as a confirmed send', (status) => {
+  it.each([
+    ['failed', true],
+    ['cancelled', true],
+    ['unknown', false],
+  ] as const)('after a %s send, reminds: %s', (status, reminds) => {
     const f = fixture()
     f.start()
     f.call('send_channel_message', { target: { type: 'current' } })
     f.result(61_000, status)
-    expect(f.projection.shouldRemind(1)).toBe(true)
+    expect(f.projection.shouldRemind(1)).toBe(reminds)
   })
 
   it('does not count sends to other channels or foreign PTC roots', () => {
@@ -196,5 +200,52 @@ describe('reply obligation after an outbound processor cancelled the message', (
       expect(obligation.responseState).toBe(expected)
       expect(obligation.producedReply).toBe(state === 'sent')
     }
+  })
+})
+
+describe('reply obligation after a send the platform did not confirm', () => {
+  it('counts an unknown send as answered without claiming the reply was produced', () => {
+    const f = fixture()
+    f.start()
+    f.call('send_channel_message', { target: { type: 'current' } })
+    f.result(2_000, 'unknown')
+    const obligation = responseObligationState(f.events, 1, [], () => true)
+    expect(obligation).toMatchObject({ responseState: 'sent', producedReply: false })
+  })
+
+  it('keeps a confirmed reply produced after a later unknown send', () => {
+    const f = fixture()
+    f.start()
+    f.call('send_channel_message', { target: { type: 'current' } }, 'first')
+    f.result(2_000, 'sent', 'first')
+    f.call('send_channel_message', { target: { type: 'current' } }, 'second')
+    f.result(3_000, 'unknown', 'second')
+    expect(responseObligationState(f.events, 1, [], () => true).producedReply).toBe(true)
+  })
+})
+
+describe('reply reminder cap', () => {
+  it('counts reminders per turn, so new messages during the turn do not reset it', () => {
+    const f = fixture()
+    f.start()
+    f.admit()
+    const counts = new Map([[1, 2]])
+    const obligation = responseObligationState(
+      f.events,
+      1,
+      [],
+      () => true,
+      (turn) => counts.get(turn) ?? 0,
+    )
+    expect(obligation).toMatchObject({ responseState: 'pending', correctionCount: 2 })
+    expect(
+      responseObligationState(
+        f.events,
+        1,
+        [],
+        () => true,
+        () => 0,
+      ).correctionCount,
+    ).toBe(0)
   })
 })

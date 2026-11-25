@@ -8,7 +8,7 @@ import {
 import type { ExtensionGovernanceToolPort } from './extension-governance/tool-port.js'
 import { parseAgentTestConfig, type AuthoringTestConfigValues } from './authoring-test-config.js'
 import { DEEPSEEK_HARNESS_VERSION } from './dsh-version.js'
-import { renderChannelMessageResult } from './channel-message-result.js'
+import { channelMessageDeliveryIssue, renderChannelMessageResult } from './channel-message-result.js'
 import type { AgentSendResult } from './extension-outbound.js'
 import { checkpointShutdownInbox, restoreShutdownInbox } from './session-shutdown-inbox.js'
 import AuthorizationService from '@deepseek-ai/dsh-authorization'
@@ -2393,9 +2393,14 @@ export const channelCommunicationTool = (
           text: renderChannelMessageResult(ChannelMessageResultSchema.parse(value)),
         },
       ],
-      presentationMeta: (_arguments, value) => ({
-        deliveryState: ChannelMessageResultSchema.parse(value).status,
-      }),
+      presentationMeta: (_arguments, value) => {
+        const result = ChannelMessageResultSchema.parse(value)
+        const deliveryIssue = channelMessageDeliveryIssue(result)
+        return {
+          deliveryState: result.status,
+          ...(deliveryIssue === undefined ? {} : { deliveryIssue: JsonValueSchema.parse(deliveryIssue) }),
+        }
+      },
     },
     async execute(args, exec) {
       if (!exec.agent) throw new Error('send_channel_message requires a live DSH Agent execution.')

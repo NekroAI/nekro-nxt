@@ -56,7 +56,15 @@ const channelAdmissionId = (message: UserMessage): string | undefined => {
 }
 
 export type ReplyRequiredResolver = (admissionId: string) => boolean
-export type CorrectionCountResolver = (admissionId: string) => number
+/** Reply reminders already given in a turn; the cap holds however many messages arrive during it. */
+export type CorrectionCountResolver = (turn: number) => number
+
+/**
+ * `unknown` means the platform took the request but did not confirm it, so the message has most likely arrived.
+ * Asking for another reply would duplicate it; a cancelled send stays unanswered because nothing went out.
+ */
+const answersChannel = (delivery: ChannelDeliveryState | undefined): boolean =>
+  delivery === 'sent' || delivery === 'partially-sent' || delivery === 'unknown'
 
 const successfulToolResult = (event: SessionEvent): { readonly callId: string } | undefined => {
   if (event.type !== 'tool/result' || event.data.error !== undefined) return undefined
@@ -169,12 +177,7 @@ export class ChannelProcessingReminderProjection {
   }
 
   #recordSend(name: string, args: unknown, delivery: ChannelDeliveryState | undefined): void {
-    if (
-      name === SEND_CHANNEL_MESSAGE_TOOL &&
-      targetsCurrentChannel(args) &&
-      (delivery === 'sent' || delivery === 'partially-sent')
-    )
-      this.#sent = true
+    if (name === SEND_CHANNEL_MESSAGE_TOOL && targetsCurrentChannel(args) && answersChannel(delivery)) this.#sent = true
   }
 
   previousStepAttemptedToStop(turn: number, step: number): boolean {
@@ -202,7 +205,6 @@ const processingReminder = (turn: number): UserMessage =>
         text: [
           '〔提醒〕这一轮已经处理了至少 60 秒，频道里还没有收到你的回复。',
           '如果还需要继续处理，可以先用 send_channel_message 告诉频道目前的进展，再继续使用工具。',
-          '如果发送结果是 unknown，先确认是否已经送达，不要重复发送。',
         ].join('\n'),
       },
     ],
@@ -233,7 +235,6 @@ const foldMessages = (
       ...state,
       latestRequiredAdmissionId: admissionId,
       responseState: 'pending',
-      correctionCount: 0,
     }
   }
   return state
@@ -262,7 +263,6 @@ export const responseObligationState = (
           ...state,
           latestRequiredAdmissionId: admissionId,
           responseState: 'pending',
-          correctionCount: 0,
         }
         continue
       }
@@ -277,13 +277,11 @@ export const responseObligationState = (
     const { name, deliveryState } = settled
     if (name === SEND_CHANNEL_MESSAGE_TOOL) {
       // Missing metadata belongs to older successful tool results and preserves their historical meaning.
-      const confirmed = deliveryState === undefined || deliveryState === 'sent' || deliveryState === 'partially-sent'
-      if (!confirmed) continue
+      if (deliveryState !== undefined && !answersChannel(deliveryState)) continue
       state = {
         ...state,
         responseState: 'sent',
-        correctionCount: 0,
-        producedReply: true,
+        producedReply: state.producedReply || deliveryState !== 'unknown',
       }
       continue
     }
@@ -291,15 +289,11 @@ export const responseObligationState = (
       state = {
         ...state,
         responseState: 'finished',
-        correctionCount: 0,
       }
     }
   }
 
-  state = foldMessages(state, proposedMessages, replyRequired)
-  if (state.responseState === 'pending' && state.latestRequiredAdmissionId !== undefined) {
-    state = { ...state, correctionCount: correctionCount(state.latestRequiredAdmissionId) }
-  }
+  state = { ...foldMessages(state, proposedMessages, replyRequired), correctionCount: correctionCount(turn) }
   if (state.responseState !== 'pending') return state
   const reasonKind = completedReasonKind(turnEvents, turn)
   if (reasonKind === undefined) return state
@@ -315,7 +309,6 @@ const responseReminder = (turn: number): UserMessage =>
         text: [
           '〔提醒〕最新的消息你还没回，刚才写的文字大家看不到。',
           '要回就用 send_channel_message；不用回就调用 finish_channel_turn 写明原因。',
-          '如果刚才的发送结果是 unknown，可能已经发出去了，别重发，直接结束。',
         ].join('\n'),
       },
     ],
@@ -331,7 +324,7 @@ const withReminder = (
   messages: readonly UserMessage[],
   replyRequired: ReplyRequiredResolver,
   correctionCount: CorrectionCountResolver,
-  recordCorrection: (admissionId: string) => void,
+  recordCorrection: (turn: number) => void,
 ): readonly UserMessage[] => {
   const before = responseObligationState(sessionEvents(agent.session), turn, [], replyRequired, correctionCount)
   const includesCurrentReminder = messages.some((message) => message.source.kind === 'nekro-nxt-channel-reply-guard')
@@ -347,7 +340,7 @@ const withReminder = (
   ) {
     return messages
   }
-  if (before.latestRequiredAdmissionId !== undefined) recordCorrection(before.latestRequiredAdmissionId)
+  recordCorrection(turn)
   return [...messages, responseReminder(turn)]
 }
 
@@ -373,21 +366,21 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
   const offEvent = context.on('session/event', (session, event) => processingBySession.get(session)?.append(event))
   const offSessionDisposed = context.on('session/disposed', (session) => processingBySession.delete(session))
   const admissionsByAgent = new WeakMap<Agent, Map<string, boolean>>()
-  const correctionsByAgent = new WeakMap<Agent, Map<string, number>>()
+  const correctionsByAgent = new WeakMap<Agent, { turn: number; count: number }>()
   const resolverFor =
     (agent: Agent): ReplyRequiredResolver =>
     (admissionId) =>
       admissionsByAgent.get(agent)?.get(admissionId) === true
   const correctionResolverFor =
     (agent: Agent): CorrectionCountResolver =>
-    (admissionId) =>
-      correctionsByAgent.get(agent)?.get(admissionId) ?? 0
+    (turn) => {
+      const corrections = correctionsByAgent.get(agent)
+      return corrections?.turn === turn ? corrections.count : 0
+    }
   const recordCorrectionFor =
     (agent: Agent) =>
-    (admissionId: string): void => {
-      const corrections = correctionsByAgent.get(agent) ?? new Map<string, number>()
-      corrections.set(admissionId, (corrections.get(admissionId) ?? 0) + 1)
-      correctionsByAgent.set(agent, corrections)
+    (turn: number): void => {
+      correctionsByAgent.set(agent, { turn, count: correctionResolverFor(agent)(turn) + 1 })
     }
   const offPreStep = context.on('agent/pre-step', async ({ agent, turn, step }, next): Promise<PreStepDecision> => {
     const decision = await next()
@@ -428,7 +421,7 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
       correctionResolverFor(agent),
     )
     if (state.responseState !== 'pending' || state.correctionCount >= MAX_RESPONSE_CORRECTIONS) return
-    if (state.latestRequiredAdmissionId !== undefined) recordCorrectionFor(agent)(state.latestRequiredAdmissionId)
+    recordCorrectionFor(agent)(turn)
     agent.steer(responseReminder(turn))
   })
   return {
@@ -436,9 +429,6 @@ export const mountChannelReplyGuard = (context: Context): ChannelReplyGuardContr
       const admissions = admissionsByAgent.get(agent) ?? new Map<string, boolean>()
       admissions.set(admissionId, replyRequired)
       admissionsByAgent.set(agent, admissions)
-      const corrections = correctionsByAgent.get(agent) ?? new Map<string, number>()
-      corrections.set(admissionId, 0)
-      correctionsByAgent.set(agent, corrections)
     },
     responseState(agent, turn) {
       return responseObligationState(

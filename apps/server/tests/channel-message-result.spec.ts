@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { MessageDeliverySummarySchema } from '@nekro-nxt/contracts'
-import { renderChannelMessageResult } from '../src/channel-message-result.js'
+import { channelMessageDeliveryIssue, renderChannelMessageResult } from '../src/channel-message-result.js'
 
 describe('channel send tool output', () => {
   it('preserves partial delivery failures and protocol diagnostics in persisted tool text', () => {
@@ -99,5 +99,24 @@ describe('send tool output after outbound processing', () => {
       ),
     )
     expect(result.processing).toEqual({ processedBy: ['署名'], parts: [{ type: 'text', text: '改写' }] })
+  })
+})
+
+describe('delivery issue for the log', () => {
+  it('names the cancelling extension, the adapter reason, or nothing for a sent message', () => {
+    expect(channelMessageDeliveryIssue({ status: 'sent', receipts: [] })).toBeUndefined()
+    expect(
+      channelMessageDeliveryIssue({
+        status: 'cancelled',
+        receipts: [],
+        cancel: { extension: '示例守卫', reason: '静默时段' },
+      }),
+    ).toEqual({ cancelledBy: '示例守卫', reason: '静默时段' })
+    expect(
+      channelMessageDeliveryIssue({
+        status: 'unknown',
+        receipts: [{ receipt: { status: 'unknown', message: '回执缺少 message_id' } }],
+      }),
+    ).toEqual({ issues: [{ status: 'unknown', message: '回执缺少 message_id' }] })
   })
 })

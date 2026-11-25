@@ -379,6 +379,100 @@ describe('session operational logs', () => {
     })
     expect(JSON.stringify(f.write.mock.calls)).not.toContain('PRIVATE_')
   })
+  it('logs a send that did not go out as sent, with the delivery issue but not the message', () => {
+    const f = fixture()
+    f.emit('tool/call', {
+      callId: ToolCallId('send'),
+      name: 'send_channel_message',
+      arguments: 'PRIVATE_ARGUMENTS',
+      turn: 1,
+      step: 2,
+    })
+    const settle = (deliveryState: string, deliveryIssue?: { issues: { status: string; message: string }[] }) =>
+      f.emit('tool/result', {
+        turn: 1,
+        step: 2,
+        message: {
+          role: 'tool',
+          toolCallId: ToolCallId('send'),
+          id: MessageId('result-send'),
+          source: { kind: 'tool', callId: ToolCallId('send') },
+          isError: false,
+          content: [{ type: 'text', text: 'PRIVATE_RESULT' }],
+        },
+        meta: { deliveryState, ...(deliveryIssue === undefined ? {} : { deliveryIssue }) },
+      })
+    settle('unknown', { issues: [{ status: 'unknown', message: 'OneBot 发送成功回执缺少 message_id' }] })
+    f.emit('tool/call', {
+      callId: ToolCallId('send'),
+      name: 'send_channel_message',
+      arguments: 'PRIVATE_ARGUMENTS',
+      turn: 1,
+      step: 3,
+    })
+    settle('sent')
+    expect(f.write).toHaveBeenCalledOnce()
+    const entry = f.write.mock.calls[0]?.[0]
+    expect(entry).toMatchObject({
+      level: 'warn',
+      message: '平台没有确认消息已送达',
+      details: {
+        tool: 'send_channel_message',
+        turn: 1,
+        step: 2,
+        deliveryState: 'unknown',
+        deliveryIssue: { issues: [{ status: 'unknown', message: 'OneBot 发送成功回执缺少 message_id' }] },
+      },
+    })
+    expect(JSON.stringify(entry)).not.toContain('PRIVATE')
+  })
+
+  it('names the violated argument paths of an invalid call without the values', () => {
+    const f = fixture()
+    f.emit('tool/call', {
+      callId: ToolCallId('bad'),
+      name: 'send_channel_message',
+      arguments: 'PRIVATE_ARGUMENTS',
+      turn: 2,
+      step: 2,
+    })
+    f.emit('tool/result', {
+      turn: 2,
+      step: 2,
+      message: {
+        role: 'tool',
+        toolCallId: ToolCallId('bad'),
+        id: MessageId('result-bad'),
+        source: { kind: 'tool', callId: ToolCallId('bad') },
+        isError: true,
+        content: [{ type: 'text', text: 'invalid arguments: missing required property "target"' }],
+      },
+      error: { name: 'ToolArgsError', code: 'INVALID_ARGS' },
+    })
+    expect(f.write.mock.calls[0]?.[0]).toMatchObject({
+      level: 'error',
+      message: '工具 send_channel_message 执行失败：INVALID_ARGS · missing required property "target"',
+      details: { reason: 'missing required property "target"' },
+    })
+  })
+
+  it('logs the reply reminders the channel gives the agent', () => {
+    const f = fixture()
+    const remind = (kind: 'nekro-nxt-channel-reply-guard' | 'nekro-nxt-channel-processing-reminder') =>
+      f.emit('user/message', {
+        role: 'user',
+        id: MessageId(`reminder-${kind}`),
+        content: [{ type: 'text', text: 'PRIVATE_REMINDER' }],
+        source: { kind, turn: 3 },
+      })
+    remind('nekro-nxt-channel-reply-guard')
+    remind('nekro-nxt-channel-processing-reminder')
+    expect(f.write.mock.calls.map(([entry]) => [entry.message, entry.details])).toEqual([
+      ['提醒智能体：最新的消息还没回复', expect.objectContaining({ turn: 3, reminder: 'reply' })],
+      ['提醒智能体：处理超过 60 秒还没有回复', expect.objectContaining({ turn: 3, reminder: 'processing' })],
+    ])
+  })
+
   it('ignores historical and foreign events and detaches on disposal', async () => {
     const f = fixture()
     const data = { turn: 1, reason: { kind: 'error', error: { code: 'UNKNOWN', message: '失败' } } } as const

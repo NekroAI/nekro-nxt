@@ -263,6 +263,7 @@ class FinishChannelTurnModel extends ScriptedCommunicationModel {
   constructor(
     private readonly invalidFirst = false,
     private readonly sendUnknownFirst = false,
+    private readonly finishOutcome = 'no-response-needed',
   ) {
     super()
   }
@@ -286,7 +287,7 @@ class FinishChannelTurnModel extends ScriptedCommunicationModel {
     } else {
       callId = ToolCallId('finish-valid')
       name = 'finish_channel_turn'
-      argumentsText = JSON.stringify({ outcome: 'no-response-needed', reason: '测试场景明确保持静默。' })
+      argumentsText = JSON.stringify({ outcome: this.finishOutcome, reason: '测试场景明确保持静默。' })
     }
     const toolCall = { type: 'tool-call' as const, id: callId, name, arguments: argumentsText }
     yield { type: 'block-start', index: 0, blockType: 'tool-call' }
@@ -959,6 +960,30 @@ describe('DSH Host and internal Channel vertical slice', () => {
     } finally {
       await unknownThenFinished.host.dispose()
       unknownThenFinished.database.close()
+    }
+
+    // The platform took the message without confirming it: the reply counts, so claiming it is not refused.
+    const unknownThenAnswered = await runScenario(
+      new FinishChannelTurnModel(false, true, 'response-complete'),
+      'UNKNOWNANSWERED',
+      '回复频道消息。',
+      'unknown',
+    )
+    try {
+      expect(unknownThenAnswered.sentParts).toEqual([[{ type: 'text', text: '投递状态未知。' }]])
+      const finish = unknownThenAnswered.events.find(
+        (event) => event.type === 'tool/result' && String(event.data.message.toolCallId) === 'finish-valid',
+      )
+      expect(finish?.type === 'tool/result' ? finish.data.message.isError : undefined).toBe(false)
+      expect(
+        unknownThenAnswered.events.filter(
+          (event) => event.type === 'user/message' && event.data.source.kind === 'nekro-nxt-channel-reply-guard',
+        ),
+      ).toHaveLength(0)
+      expect(unknownThenAnswered.events.filter((event) => event.type === 'step/start')).toHaveLength(2)
+    } finally {
+      await unknownThenAnswered.host.dispose()
+      unknownThenAnswered.database.close()
     }
 
     const partiallySentThenFinished = await runScenario(

@@ -23,7 +23,30 @@ interface TurnProgress {
   abortedTools: Set<string>
 }
 
-/** Read only diagnostic fields, never messages, arguments, tool results or replay metadata. */
+const DELIVERY_STATE_LABELS: Readonly<Record<string, string>> = {
+  'partially-sent': '消息只发出了一部分',
+  failed: '消息发送失败',
+  unknown: '平台没有确认消息已送达',
+  cancelled: '消息被扩展取消，没有发出',
+}
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+/** Argument violations name schema paths and rules only, never the values the model wrote. */
+const argumentViolations = (content: readonly { readonly type: string }[]): string | undefined => {
+  for (const block of content) {
+    if (block.type !== 'text' || !('text' in block) || typeof block.text !== 'string') continue
+    const match = /invalid arguments: (.+)/u.exec(block.text)
+    if (match?.[1] !== undefined) return match[1].slice(0, 500)
+  }
+  return undefined
+}
+
+/**
+ * Read only diagnostic fields, never messages, arguments, tool results or replay metadata. The exceptions are
+ * diagnostics written for the log: delivery issues in the send tool's metadata and argument violations.
+ */
 export function attachSessionLogs(
   context: Context,
   logs: HostLogSink,
@@ -99,11 +122,32 @@ export function attachSessionLogs(
       event.type !== 'tool/ptc-dispatch-start' &&
       event.type !== 'tool/ptc-dispatch' &&
       event.type !== 'assistant/message' &&
-      event.type !== 'assistant/attempt'
+      event.type !== 'assistant/attempt' &&
+      event.type !== 'user/message'
     )
       return
     const source = { kind: 'system' as const, id: 'agent-runtime', name: '智能体运行' }
     switch (event.type) {
+      case 'user/message': {
+        const origin = event.data.source
+        if (origin.kind !== 'nekro-nxt-channel-reply-guard' && origin.kind !== 'nekro-nxt-channel-processing-reminder')
+          return
+        logs.write({
+          level: 'info',
+          message:
+            origin.kind === 'nekro-nxt-channel-reply-guard'
+              ? '提醒智能体：最新的消息还没回复'
+              : '提醒智能体：处理超过 60 秒还没有回复',
+          source,
+          scope: { ...scope, operationId: `${scope.sessionId}:reminder:${event.seq}` },
+          details: {
+            ...labels,
+            turn: origin.turn,
+            reminder: origin.kind === 'nekro-nxt-channel-reply-guard' ? 'reply' : 'processing',
+          },
+        })
+        return
+      }
       case 'turn/start':
         remember(`turn:${event.data.turn}`, timestamp, undefined, event.data.turn)
         turns.set(event.data.turn, {
@@ -164,10 +208,38 @@ export function attachSessionLogs(
             }
           }
         }
-        if (!failed && !error) return
-        if (cancelled) return
         const tool = event.type === 'tool/ptc-dispatch' ? event.data.name : timing.tool
-        const diagnostic = [error?.code, error?.reason].filter(Boolean).join(' · ') || '未提供独立错误详情'
+        const placement =
+          event.type === 'tool/ptc-dispatch'
+            ? { tool: event.data.name, rootCallId: event.data.rootCallId, parentCallId: event.data.parentCallId }
+            : { turn: event.data.turn, step: event.data.step }
+        if (!failed && !error) {
+          const meta = isRecord(event.data.meta) ? event.data.meta : undefined
+          const deliveryState = meta?.['deliveryState']
+          if (tool !== 'send_channel_message' || typeof deliveryState !== 'string' || deliveryState === 'sent') return
+          logs.write({
+            level: 'warn',
+            message: DELIVERY_STATE_LABELS[deliveryState] ?? `消息没有确认发出（${deliveryState}）`,
+            source,
+            scope: { ...scope, operationId: `${scope.sessionId}:${key}` },
+            details: {
+              ...labels,
+              ...timing,
+              ...placement,
+              nested,
+              deliveryState,
+              ...(meta?.['deliveryIssue'] === undefined ? {} : { deliveryIssue: meta['deliveryIssue'] }),
+            },
+          })
+          return
+        }
+        if (cancelled) return
+        const violations =
+          error?.code === 'INVALID_ARGS'
+            ? argumentViolations(event.type === 'tool/result' ? event.data.message.content : event.data.content)
+            : undefined
+        const diagnostic =
+          [error?.code, error?.reason ?? violations].filter(Boolean).join(' · ') || '未提供独立错误详情'
         logs.write({
           level: 'error',
           message: `${tool ? `工具 ${tool}` : '工具'} 执行失败：${diagnostic}`,
@@ -177,12 +249,10 @@ export function attachSessionLogs(
           details: {
             ...labels,
             ...timing,
-            ...(event.type === 'tool/ptc-dispatch'
-              ? { tool: event.data.name, rootCallId: event.data.rootCallId, parentCallId: event.data.parentCallId }
-              : { turn: event.data.turn, step: event.data.step }),
+            ...placement,
             nested,
             ...(error ? { errorName: error.name } : {}),
-            reason: error?.reason ?? (error ? error.code : '工具报告失败，未提供独立错误详情。'),
+            reason: error?.reason ?? violations ?? (error ? error.code : '工具报告失败，未提供独立错误详情。'),
           },
         })
         return
