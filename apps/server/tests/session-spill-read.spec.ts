@@ -14,6 +14,8 @@ import { extendConfinedArgv, hostCommandConfinement } from '../src/command-confi
 import { sessionSpillDirectory } from '../src/dsh-spill.ts'
 import { mountWorkspaceFileTools } from '../src/workspace-file-tools.ts'
 import { createWorkspaceFileSystem } from '../src/workspace-file-system.ts'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import { executeToolCall } from './fixtures/tool-call.js'
 
 const directories: string[] = []
 afterEach(() => {
@@ -96,11 +98,12 @@ describe('reading back the Session spill files (#130)', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjections)
     await ctx.plugin(LocalSubprocessRuntime)
     mountWorkspaceFileTools(ctx, { workspace, unrestricted: false, readOnlyRoots: () => [own] })
     const run = async (name: string, args: Record<string, unknown>) => {
-      const result = await ctx.tools.execute({
+      const result = await executeToolCall(ctx, {
         callId: ToolCallId(`${name}-call`),
         name,
         arguments: args,

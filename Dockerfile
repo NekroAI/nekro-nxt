@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:24-bookworm-slim AS build
 
 ARG NEKRO_RELEASE_ID=0.0.0+local
 ENV NEKRO_RELEASE_ID=${NEKRO_RELEASE_ID}
@@ -14,7 +14,7 @@ RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @nekro-nxt/server... --filter @nekro-nxt/web... run build
 RUN pnpm --filter @nekro-nxt/server deploy --prod --legacy /release/server
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 ARG NEKRO_RELEASE_ID=0.0.0+local
 

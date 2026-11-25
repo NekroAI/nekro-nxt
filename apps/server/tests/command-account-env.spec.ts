@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
 import ToolRuntime from '@deepseek-ai/dsh-tools'
 import SandboxPolicyService from '@deepseek-ai/dsh-sandbox-policy'
 import SessionProjections from '@deepseek-ai/dsh-session-projection'
@@ -289,6 +290,7 @@ describe('commands on Windows run in PowerShell at every access level (#96)', ()
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjections)
     await mountDevelopmentCapabilities(
       ctx,
@@ -362,6 +364,7 @@ describe('the command host section (#113)', () => {
     const ctx = new Context()
     await ctx.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
     await ctx.plugin(ToolRuntime)
+    await ctx.plugin(NativeToolExecutor)
     await ctx.plugin(SessionProjections)
     await mountDevelopmentCapabilities(
       ctx,

@@ -492,7 +492,7 @@ export class HostQueries {
         })),
       ),
       optionalProjection(() => runtime.host.getWebSearchCapabilityStatus(), {
-        provider: 'deepseek-official' as const,
+        provider: 'deepseek-search-api' as const,
         available: false,
         credentialConfigured: false,
         credentialReference: 'DEEPSEEK_API_KEY',

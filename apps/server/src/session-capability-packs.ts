@@ -44,15 +44,32 @@ const SCHEDULED_TASKS_INSTRUCTIONS =
   '到时间时你会收到一条〔定时任务到时间了〕通知，再决定在群里说什么、做什么；任务自己不会发消息。所以 label 要写清到时候做什么、对谁。'
 
 /**
+ * Tools that DSH plugins register themselves (DSH's grep and Cordis inspection), so they cannot carry the step
+ * condition that keeps an unloaded pack's tools out of direct tool calls; there they stay resident instead.
+ */
+const SELF_REGISTERED_TOOLS: ReadonlySet<string> = new Set(['grep', 'cordis_inspect_list', 'cordis_inspect_query'])
+
+type PackCapabilities = Pick<
+  AgentCapabilityGrants,
+  'dynamicCreation' | 'extensionAutonomy' | 'scheduledTasks' | 'fileTools' | 'developmentShell' | 'communityDocs'
+>
+
+/**
  * Every pack one agent's session offers, in catalog order. Packs whose tools this session does not register drop out
  * when the catalog is built; 「文件管理」 also needs the capability check, since commands bring tools of the same names.
+ * Under direct tool calls (`native`) the packs leave out the tools DSH registers itself.
  */
 export const sessionCapabilityPacks = (
-  capabilities: Pick<
-    AgentCapabilityGrants,
-    'dynamicCreation' | 'extensionAutonomy' | 'scheduledTasks' | 'fileTools' | 'developmentShell' | 'communityDocs'
-  >,
-): CapabilityPack[] => [
+  capabilities: PackCapabilities,
+  presentation: 'ptc' | 'native' = 'ptc',
+): CapabilityPack[] => {
+  const packs = allSessionCapabilityPacks(capabilities)
+  return presentation === 'ptc'
+    ? packs
+    : packs.map((pack) => ({ ...pack, tools: pack.tools.filter((name) => !SELF_REGISTERED_TOOLS.has(name)) }))
+}
+
+const allSessionCapabilityPacks = (capabilities: PackCapabilities): CapabilityPack[] => [
   ...extensionCapabilityPacks(capabilities),
   communityCapabilityPack(capabilities),
   ...(capabilities.communityDocs

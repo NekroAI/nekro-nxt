@@ -278,13 +278,11 @@ export class SubConversationManager {
         provider: 'spawn',
         label: record.title,
         childId: SessionId(record.dshSessionId),
-        request: {
-          prompt: [{ type: 'text', text: input.task }],
-          // The tools it may use and its output limit come from the Host's child composition (agentPresets).
-          parent: input.parent,
-          // DSH keeps the chosen route in the child's log, so a cold resume talks in the same model.
-          ...(input.model === undefined ? {} : { agentOptions: agentOptionsOf(input.model) }),
-        },
+        prompt: [{ type: 'text', text: input.task }],
+        // The tools it may use and its output limit come from the Host's child composition (agentPresets).
+        parent: input.parent,
+        // DSH keeps the chosen route in the child's log, so a cold resume talks in the same model.
+        ...(input.model === undefined ? {} : { agentOptions: agentOptionsOf(input.model) }),
         signal: new AbortController().signal,
         delivery: 'parent',
       })
@@ -326,11 +324,9 @@ export class SubConversationManager {
         provider: 'spawn',
         label: record.title,
         childId: SessionId(record.dshSessionId),
-        request: {
-          prompt: [{ type: 'text', text: input.title }],
-          parent: input.parent,
-          agentOptions: { provider: CONVERSATION_SCRIPT_PROVIDER, model: record.dshSessionId },
-        },
+        prompt: [{ type: 'text', text: input.title }],
+        parent: input.parent,
+        agentOptions: { provider: CONVERSATION_SCRIPT_PROVIDER, model: record.dshSessionId },
         signal: new AbortController().signal,
         delivery: 'caller',
       })
@@ -456,10 +452,16 @@ export class SubConversationManager {
     return removed
   }
 
+  /**
+   * Stops what an ended sub-conversation is still doing. DSH releases a child once it has no work left, so stopping
+   * its turn and waiting for it to go idle is enough; an idle or unloaded one needs nothing.
+   */
   async #release(record: SubConversationRecord): Promise<void> {
-    const parent = this.#options.context.agents.get(SessionId(record.parentDshSessionId))
-    if (parent === undefined) return
-    await this.#options.context.subagents.drainChildren(parent, [SessionId(record.dshSessionId)])
+    const childId = SessionId(record.dshSessionId)
+    const child = this.#options.context.agents.get(childId)
+    if (child === undefined) return
+    this.#options.context.subagents.interrupt(childId, { kind: 'user' })
+    await child.whenIdle()
   }
 
   #releaseAfterTurn(child: Agent, record: SubConversationRecord): void {

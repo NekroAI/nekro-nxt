@@ -26,7 +26,7 @@ jobs:
           version: 11.7.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22.23.2
+          node-version: 24.22.3
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # security.ubuntu.com is not always reachable from GitHub's runners; their Azure mirror carries the same

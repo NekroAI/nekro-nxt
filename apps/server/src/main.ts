@@ -17,8 +17,7 @@ import { startRecoveryServer } from './server-recovery.js'
  * caller supplies absolute inputs.
  */
 import { Context } from '@deepseek-ai/cordis'
-import { serveStatic } from '@deepseek-ai/dsh-host-frontend-static'
-import { createWebAssetHandler, sendHtml } from './web-assets.js'
+import { createWebAssetHandler, renderProductIndex, sendHtml, serveDistFallback } from './web-assets.js'
 import WebServer from '@deepseek-ai/dsh-host-webserver'
 import type { Context as LlmContext } from '@deepseek-ai/cordis'
 import { HostUpgradeCoordinator, type UpgradeJournal } from '@nekro-nxt/client-migrations'
@@ -39,7 +38,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 import { NekroRuntime } from './bootstrap.js'
-import { createNekroHostApi } from './host-api.js'
+import { createNekroHostApi, listeningPort } from './host-api.js'
 import {
   initializeServerIdentity,
   parseDevelopmentWebOrigin,
@@ -177,7 +176,8 @@ export const registerNekroSpaRoutes = (
 ): (() => void) => {
   const resolvedDistIndex = resolveRoot(distIndex)
   const disposers: Array<() => void> = []
-  const renderIndex = async (): Promise<string> => webServer.renderIndex(await readFile(resolvedDistIndex, 'utf8'))
+  const renderIndex = async (): Promise<string> =>
+    renderProductIndex(webServer, await readFile(resolvedDistIndex, 'utf8'))
   try {
     for (const routePath of NEKRO_SPA_ROUTE_PREFIXES) {
       disposers.push(
@@ -822,6 +822,7 @@ const startLeasedServer = async (
     } catch (error) {
       throw explainListenPermissionFailure(error, managementKey === undefined ? port : 0)
     }
+    const listenPort = listeningPort(webContext.webServer)
     runtime.hostRestart = new HostRestart({
       hostKind: process.env['NEKRO_HOST_KIND'] === 'desktop' ? 'desktop' : 'server',
       ...(options.requestRestart === undefined ? {} : { exit: options.requestRestart }),
@@ -829,7 +830,7 @@ const startLeasedServer = async (
       startupMs: () => startup.ms,
     })
     // The headless browser that checks creation candidates opens this Host's own page on its loopback listener.
-    runtime.setVerificationOrigin(`http://127.0.0.1:${webContext.webServer.port}`)
+    runtime.setVerificationOrigin(`http://127.0.0.1:${listenPort}`)
     // Public static helper; NXT's management edge owns authentication. The upstream
     // plugin now injects its native Connection service, which this Host does not use.
     const distIndex = resolveRoot(options.distIndex)
@@ -858,18 +859,15 @@ const startLeasedServer = async (
           // The entry page is rendered per request, so it is compressed here rather than inside the helper.
           const target = path.resolve(path.normalize(path.join(distRoot, pathname)))
           if (target === distRoot || target === distIndex) {
-            await sendHtml(request, response, webContext.webServer.renderIndex(await readFile(distIndex, 'utf8')))
+            await sendHtml(
+              request,
+              response,
+              renderProductIndex(webContext.webServer, await readFile(distIndex, 'utf8')),
+            )
             return
           }
           if (await serveAsset(request, response, pathname)) return
-          await serveStatic(
-            pathname,
-            response,
-            path.dirname(distIndex),
-            distIndex,
-            () => true,
-            async () => webContext.webServer.renderIndex(await readFile(distIndex, 'utf8')),
-          )
+          await serveDistFallback(request, response, pathname, distRoot)
         }),
       'nekro-nxt: static product frontend',
     )
@@ -958,7 +956,7 @@ const startLeasedServer = async (
         managementEdge = await startManagementEdge({
           host,
           port,
-          internalPort: webContext.webServer.port,
+          internalPort: listenPort,
           dataRoot,
           managementKey,
           releaseId,
@@ -998,7 +996,7 @@ const startLeasedServer = async (
     }
 
     options.signal?.throwIfAborted()
-    return { port: managementEdge?.port ?? webContext.webServer.port, secure: managementEdge !== undefined, stop }
+    return { port: managementEdge?.port ?? listenPort, secure: managementEdge !== undefined, stop }
   }
 }
 

@@ -25,7 +25,7 @@ export type MemoryEventData =
   | { readonly kind: 'idle-review'; readonly quietMinutes: number }
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    'nekro-nxt/memory': MemoryEventData
+  interface PluginRecordMap {
+    'plugin:nekro-nxt/memory': MemoryEventData
   }
 }

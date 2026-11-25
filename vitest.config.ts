@@ -49,7 +49,7 @@ export default defineConfig({
         'apps/server/src/server-recovery.ts',
         'apps/server/src/data-root-lease.ts',
         'apps/server/src/dsh-host-profile.ts',
-        'apps/server/src/dsh-session-persistence.ts',
+        'apps/server/src/nxt-session-records.ts',
         'apps/server/src/dynamic-cordis-tools.ts',
         'apps/server/src/runtime-compatibility.ts',
         'apps/server/src/session-event-history.ts',

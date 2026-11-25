@@ -119,13 +119,17 @@ import { WorkingDirectoryService } from '@deepseek-ai/dsh-working-directory'
 import { bindScopeParent, scopeOf } from '@deepseek-ai/dsh-scope'
 import { SessionId, SessionStore } from '@deepseek-ai/dsh-session'
 import * as SessionCheckpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy'
-import { NekroJsonlSessionPersistence } from './dsh-session-persistence.js'
+import * as JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
+import { appendNxtRecord, nxtRecordOf } from './nxt-session-records.js'
 import SessionProjectionRegistry from '@deepseek-ai/dsh-session-projection'
 import * as SessionStats from '@deepseek-ai/dsh-session-stats'
 import DeepSeekLlmApiExtensionRegistry from '@deepseek-ai/dsh-deepseek-llm-api-extensions'
 import * as ShellEnv from '@deepseek-ai/dsh-shell-env'
 import SkillRegistry from '@deepseek-ai/dsh-skill'
-import type { SubagentCatalogEntry } from '@deepseek-ai/dsh-subagent'
+import type { SubagentDescendantListEntry } from '@deepseek-ai/dsh-subagent'
+
+/** One direct child as DSH's subagent catalog lists it. */
+type SubagentChildEntry = Extract<SubagentDescendantListEntry, { readonly kind: 'child' }>
 import * as SubagentSpawnInProcess from '@deepseek-ai/dsh-subagent-spawn-in-process'
 import LocalSubprocessRuntime from '@deepseek-ai/dsh-subprocess-local'
 import { PERSONA_PREFIX_SECTION, SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
@@ -137,7 +141,15 @@ import * as FsTool from '@deepseek-ai/dsh-tool-fs'
 import * as PwshTool from '@deepseek-ai/dsh-tool-pwsh'
 import * as SkillTool from '@deepseek-ai/dsh-tool-skill'
 import * as ToolWeb from '@deepseek-ai/dsh-tool-web'
-import { defineTool, ToolArgsError, ToolRuntime } from '@deepseek-ai/dsh-tools'
+import * as NativeToolExecutor from '@deepseek-ai/dsh-tool-executor-native'
+import * as PtcToolExecutor from '@deepseek-ai/dsh-tool-executor-ptc'
+import {
+  defineTool,
+  ToolArgsError,
+  ToolRuntime,
+  type ToolDefinition,
+  type ToolRegistrationOptions,
+} from '@deepseek-ai/dsh-tools'
 import WebRuntime from '@deepseek-ai/dsh-web'
 import {
   type AgentSessionDriver,
@@ -261,7 +273,12 @@ import { backlogImageCount, foldedBacklogNotice, selectBacklog } from './backlog
 import './memory-events.js'
 import { memberNoteAttachments, visibleMemberNotes } from './member-notes.js'
 import { CHANNEL_PROMPT_MAX_CHARS, MEMBER_NOTE_MAX_CHARS, type ChannelPrompts } from './channel-prompts.js'
-import { mountCapabilityPacks, type PromptSectionSize } from './capability-packs.js'
+import {
+  capabilityLoadState,
+  capabilityPackRegistration,
+  mountCapabilityPacks,
+  type PromptSectionSize,
+} from './capability-packs.js'
 import { projectSessionContext } from './channel-runtime-context.js'
 import {
   EXTENSION_ACTION_TOOLS,
@@ -440,8 +457,8 @@ const idleReviewText = (quietMinutes: number): string =>
 const IDLE_REVIEW_RETRY_MS = 5 * 60_000
 
 declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    'nekro-nxt/image-inspection': {
+  interface PluginRecordMap {
+    'plugin:nekro-nxt/image-inspection': {
       readonly callId: string
       readonly cacheKey?: string
       readonly mode: 'direct' | 'delegated'
@@ -456,7 +473,7 @@ declare module '@deepseek-ai/dsh-session/types' {
       readonly errorCode?: string
       readonly error?: string
     }
-    'nekro-nxt/image-admission': {
+    'plugin:nekro-nxt/image-admission': {
       readonly admissionId: string
       readonly imageCount: number
       readonly injectedCount: number
@@ -464,7 +481,7 @@ declare module '@deepseek-ai/dsh-session/types' {
       readonly skippedCount: number
       readonly deferredCount?: number
     }
-    'nekro-nxt/image-restoration': {
+    'plugin:nekro-nxt/image-restoration': {
       readonly compactionId: string
       readonly candidateCount: number
       readonly restoredAssetIds: readonly string[]
@@ -1433,6 +1450,30 @@ const ROOT_CONTEXT_MANAGEMENT_POLICY = `费时又会产生大量中间信息的�
 const scopeHasTool = (tools: ToolRuntime, name: string, scope: ReturnType<typeof scopeOf>): boolean =>
   tools.get(name, scope) !== undefined
 
+/** Choose `route` for the agent's next step; an unchanged choice records nothing. */
+const selectModelRoute = (agent: Agent, route: AgentModelSelection): void => {
+  const selected = agent.model.current()
+  if (
+    selected !== undefined &&
+    sameRoute(selected, route) &&
+    (selected.reasoningEffort === undefined ? undefined : String(selected.reasoningEffort)) === route.reasoningEffort
+  )
+    return
+  if (route.reasoningEffort !== undefined) {
+    try {
+      agent.model.select({
+        provider: route.provider,
+        model: route.model,
+        reasoningEffort: ReasoningEffortId(route.reasoningEffort),
+      })
+      return
+    } catch {
+      // The model no longer offers the saved level: use the model's default, as DSH does for the agent's own choice.
+    }
+  }
+  agent.model.select({ provider: route.provider, model: route.model })
+}
+
 /** Said only when the agent limits request images, so every other conversation keeps its prompt prefix. */
 const OMITTED_IMAGE_POLICY =
   '图片多了以后，最早的会换成一段占位文字，其中 `nxt-asset:` 和最后一个 `:` 之间是图片编号，需要时用 asset_inspect_images 重新查看。'
@@ -2017,7 +2058,12 @@ export const notesUpdateTool = (
       if (about === undefined) {
         const record = prompts.updateNotesByAgent(channelId, parsed.content)
         const chars = promptDocumentPlainText(record.document).length
-        exec.agent?.session.append('nekro-nxt/memory', { kind: 'notes-updated', revision: record.revision, chars })
+        if (exec.agent !== undefined)
+          appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/memory', {
+            kind: 'notes-updated',
+            revision: record.revision,
+            chars,
+          })
         return Promise.resolve({ about: 'channel', chars })
       }
       const memberId = ChannelMemberIdSchema.safeParse(about)
@@ -2028,12 +2074,13 @@ export const notesUpdateTool = (
       if (members?.describe(memberId.data).kind === 'self') throw new Error('这是你自己的账号，不用给自己记笔记。')
       const record = prompts.saveMemberNote({ channelId, memberId: memberId.data, text: parsed.content, by: 'agent' })
       const chars = record?.text.length ?? 0
-      exec.agent?.session.append('nekro-nxt/memory', {
-        kind: 'member-notes-updated',
-        memberId: memberId.data,
-        ...(member.displayName === undefined ? {} : { name: member.displayName }),
-        chars,
-      })
+      if (exec.agent !== undefined)
+        appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/memory', {
+          kind: 'member-notes-updated',
+          memberId: memberId.data,
+          ...(member.displayName === undefined ? {} : { name: member.displayName }),
+          chars,
+        })
       return Promise.resolve({
         about: memberId.data,
         ...(member.displayName === undefined ? {} : { name: member.displayName }),
@@ -2717,14 +2764,15 @@ const historyTools = (channelId: ChannelId, history: HistoryLookup, members?: Ch
       execute: (args, exec) => {
         const result = searchHistoryText(input, args, Date.now())
         const { filter } = result
-        exec.agent?.session.append('nekro-nxt/memory', {
-          kind: 'history-search',
-          query: args.query,
-          hits: result.hits,
-          ...(filter.ownOnly ? { sender: '你' } : filter.sender === undefined ? {} : { sender: filter.sender }),
-          ...(filter.since === undefined ? {} : { since: filter.since }),
-          ...(filter.until === undefined ? {} : { until: filter.until }),
-        })
+        if (exec.agent !== undefined)
+          appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/memory', {
+            kind: 'history-search',
+            query: args.query,
+            hits: result.hits,
+            ...(filter.ownOnly ? { sender: '你' } : filter.sender === undefined ? {} : { sender: filter.sender }),
+            ...(filter.since === undefined ? {} : { since: filter.since }),
+            ...(filter.until === undefined ? {} : { until: filter.until }),
+          })
         return Promise.resolve(result.text)
       },
     }),
@@ -3089,7 +3137,7 @@ const assetInspectImagesTool = (input: {
             effectiveDetail,
             images,
           })
-          exec.agent.session.append('nekro-nxt/image-inspection', {
+          appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/image-inspection', {
             ...baseAudit,
             mode: 'direct',
             cacheHit: false,
@@ -3115,19 +3163,20 @@ const assetInspectImagesTool = (input: {
         const cacheKey = createHash('sha256').update(cachePayload).digest('hex')
         const cached = [...sessionEvents(exec.agent.session)]
           .reverse()
+          .map((event) => nxtRecordOf(event, 'plugin:nekro-nxt/image-inspection'))
           .find(
-            (event) =>
-              event.type === 'nekro-nxt/image-inspection' &&
-              event.data.mode === 'delegated' &&
-              event.data.cacheKey === cacheKey &&
-              event.data.result !== undefined &&
-              event.data.error === undefined,
+            (record) =>
+              record !== undefined &&
+              record.data.mode === 'delegated' &&
+              record.data.cacheKey === cacheKey &&
+              record.data.result !== undefined &&
+              record.data.error === undefined,
           )
-        if (cached?.type === 'nekro-nxt/image-inspection' && cached.data.result !== undefined) {
+        if (cached !== undefined && cached.data.result !== undefined) {
           const cachedResult = DelegatedImageInspectionValueSchema.safeParse(cached.data.result)
           if (cachedResult.success) {
             const result = DelegatedImageInspectionValueSchema.parse({ ...cachedResult.data, cacheHit: true })
-            exec.agent.session.append('nekro-nxt/image-inspection', {
+            appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/image-inspection', {
               ...baseAudit,
               mode: 'delegated',
               cacheKey,
@@ -3213,7 +3262,7 @@ const assetInspectImagesTool = (input: {
           },
           cacheHit: false,
         })
-        exec.agent.session.append('nekro-nxt/image-inspection', {
+        appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/image-inspection', {
           ...baseAudit,
           mode: 'delegated',
           cacheKey,
@@ -3225,7 +3274,7 @@ const assetInspectImagesTool = (input: {
         })
         return parseJsonValue(result)
       } catch (error) {
-        exec.agent.session.append('nekro-nxt/image-inspection', {
+        appendNxtRecord(exec.agent.session, 'plugin:nekro-nxt/image-inspection', {
           ...baseAudit,
           mode: input.supportsImage ? 'direct' : 'delegated',
           ...(input.auxiliary === undefined
@@ -3250,6 +3299,7 @@ export async function mountDevelopmentCapabilities(
   platform: NodeJS.Platform = process.platform,
   readOnlyRoots: () => readonly string[] = () => [],
   hostPrompt = '',
+  registration?: (name: string) => ToolRegistrationOptions | undefined,
 ): Promise<void> {
   const { developmentShell, fileTools, unrestrictedFileAccess } = capabilities
   if (!developmentShell && !fileTools) return
@@ -3279,11 +3329,11 @@ export async function mountDevelopmentCapabilities(
   if (fileTools && !developmentShell) {
     // Without commands the agent still moves, deletes, searches and unzips; with them its shell does all of this.
     await capabilityContext.plugin(LocalSubprocessRuntime)
-    mountWorkspaceFileTools(capabilityContext, {
-      workspace: workspaceRoot,
-      unrestricted: unrestrictedFileAccess,
-      readOnlyRoots,
-    })
+    mountWorkspaceFileTools(
+      capabilityContext,
+      { workspace: workspaceRoot, unrestricted: unrestrictedFileAccess, readOnlyRoots },
+      registration,
+    )
   }
 
   if (developmentShell) {
@@ -3385,8 +3435,9 @@ async function mountWebCapabilities(agentContext: Context, revision: AgentRevisi
   if (!revision.capabilities.webSearch) return
   await agentContext.plugin(ToolWeb, {
     search: true,
-    fetch: false,
+    fetch: true,
     searchMaxResults: 5,
+    searchMaxQueries: 2,
     searchTimeoutMs: 60_000,
   })
 }
@@ -3832,6 +3883,7 @@ export class DshHostRuntime implements AgentSessionDriver {
           [llmRuntime, 'llm'],
           [SessionStore, 'session'],
           [ToolRuntime, 'tools'],
+          [NativeToolExecutor, 'tool-executor-native'],
           [AgentRegistry, 'agent'],
           [SkillRegistry, 'skill'],
           [SystemPrompt, 'system-prompt'],
@@ -3880,7 +3932,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       const conversationScripts = new ConversationScriptModel()
       context.llm.registerAdapter([CONVERSATION_SCRIPT_PROVIDER], conversationScripts)
       await context.plugin(SessionStore)
-      await context.plugin(NekroJsonlSessionPersistence, {
+      await context.plugin(JsonlSessionPersistence, {
         root: path.join(path.dirname(options.sessionDatabasePath), 'dsh', 'sessions'),
       })
       mountSessionEventHistory(context)
@@ -3903,7 +3955,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       await context.plugin(SessionStats)
       // The persona introduces the agent; DSH's generic "AI agent" opening would contradict it.
       await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
-      await context.plugin(ToolRuntime, { mode: 'native' })
+      await context.plugin(ToolRuntime)
+      // Deployment default; an agent that writes programs selects the PTC executor in its own scope.
+      await context.plugin(NativeToolExecutor)
       await context.plugin(SkillRegistry)
       await context.plugin(AgentRegistry)
       await context.plugin(NekroNxtAgentScopeInheritance)
@@ -3954,11 +4008,13 @@ export class DshHostRuntime implements AgentSessionDriver {
         config: { maxInlineTokens: 12_500 },
         required: true,
       })
-      await context.plugin(WebRuntime, { searchProvider: 'deepseek-official' })
+      // Search and fetch go straight to the DeepSeek Search and Fetch APIs, one request per operation, billed to the
+      // DEEPSEEK_API_KEY credential (NXT has no DeepSeek account sign-in).
+      await context.plugin(WebRuntime, { searchProvider: 'deepseek-search-api', fetchProvider: 'deepseek-fetch-api' })
       registerDshHostProfileEntry(context, {
-        id: 'web-search-deepseek',
-        name: '@deepseek-ai/dsh-web-search-deepseek',
-        config: { apiKeyEnv: 'DEEPSEEK_API_KEY', maxTokens: 1024, maxUses: 2 },
+        id: 'web-deepseek-api',
+        name: '@deepseek-ai/dsh-web-deepseek-api',
+        config: { count: 5, searchBilling: 'api-key', fetchBilling: 'api-key' },
         required: true,
       })
       await context.plugin(SessionCheckpointPolicy)
@@ -4441,7 +4497,19 @@ export class DshHostRuntime implements AgentSessionDriver {
     }> = []
     // Candidates that had passed verification before the restart, by Runner package.
     const verifiedBeforeRestart = new Map<string, DynamicAuthoringVerification>()
+    const programmatic =
+      revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())
+    // Direct tool calls declare tools in the request; adding a loaded pack's tools there mid-conversation is only
+    // cheap on routes that accept additions, so elsewhere every tool stays resident.
+    const packsFit = programmatic || modelInfo.toolUpdate === 'addition-only' || modelInfo.toolUpdate === 'in-history'
+    const packPresentation = programmatic ? 'ptc' : 'native'
+    const packs = packsFit ? sessionCapabilityPacks(revision.capabilities, packPresentation) : []
+    const packLoadState = capabilityLoadState()
+    const packRegistration = capabilityPackRegistration(packs, packPresentation, packLoadState)
     const setup = async (agentContext: Context): Promise<void> => {
+      /** Registers a session tool; under direct tool calls a pack tool joins a step only once its pack is loaded. */
+      const registerTool = (tool: ToolDefinition): (() => void) =>
+        agentContext.tools.register(tool, packRegistration(tool.name))
       if (this.#logs) {
         bindLogOwner(
           agentContext,
@@ -4489,11 +4557,6 @@ export class DshHostRuntime implements AgentSessionDriver {
         origin: feedbackOrigin,
       })
       agentContext.effect(() => feedbackTools.dispose, 'nekro-nxt: community feedback tools')
-      agentContext.on('system-prompt/assemble', async (_assembly, context, next) => {
-        // DSH assembles tools before agent/pre-step. Reassemble once after changing the owned registrations.
-        if (feedbackTools.refresh()) return agentContext.systemPrompt.assemble(context)
-        return next()
-      })
       agentContext.on('agent/pre-step', async ({ agent, turn, messages }, next) => {
         if (agent.id === sessionId) {
           feedbackOrigin.begin(turn, messages)
@@ -4576,7 +4639,7 @@ export class DshHostRuntime implements AgentSessionDriver {
             scopeHasTool(agentContext.tools, 'send_channel_message', context.scope) ? instructions : '',
         })
         agentContext.systemPrompt.context({ name: 'nekro-nxt:channel-notes', order: 890, text: () => notes })
-        agentContext.tools.register(notesUpdateTool(input.channelId, channelPrompts, this.#history, this.#members))
+        registerTool(notesUpdateTool(input.channelId, channelPrompts, this.#history, this.#members))
       }
       agentContext.systemPrompt.section({
         name: 'nekro-nxt:channel-context',
@@ -4618,31 +4681,25 @@ export class DshHostRuntime implements AgentSessionDriver {
           revision.imagePolicy.history.maxRequestImages !== undefined,
         ),
       })
-      agentContext.tools.register(channelContextTool(input.episodeId, input.channelId, this.#history, this.#members))
-      agentContext.tools.register(productVersionTool(this.#releaseId))
+      registerTool(channelContextTool(input.episodeId, input.channelId, this.#history, this.#members))
+      registerTool(productVersionTool(this.#releaseId))
       if (this.#hostRestart?.() !== undefined) {
-        agentContext.tools.register(hostRestartTool(revision.agentId, input.channelId, this.#hostRestart))
+        registerTool(hostRestartTool(revision.agentId, input.channelId, this.#hostRestart))
       }
-      agentContext.tools.register(
+      registerTool(
         assetCreateTool(input.channelId, this.#assets, this.#assetService, { workspace: developmentWorkspace }),
       )
       if (developmentWorkspace !== undefined) {
-        agentContext.tools.register(
-          assetSaveToWorkspaceTool(input.channelId, this.#assets, this.#assetService, developmentWorkspace),
-        )
+        registerTool(assetSaveToWorkspaceTool(input.channelId, this.#assets, this.#assetService, developmentWorkspace))
       }
       if (this.#assets.revokeUnusedAgentAsset !== undefined) {
-        agentContext.tools.register(assetDeleteTool(input.channelId, this.#assets))
+        registerTool(assetDeleteTool(input.channelId, this.#assets))
       }
       if (this.#speech !== undefined && revision.capabilities.voiceTranscription) {
-        agentContext.tools.register(
-          audioTranscribeTool(input.channelId, this.#assets, this.#assetService, this.#speech),
-        )
+        registerTool(audioTranscribeTool(input.channelId, this.#assets, this.#assetService, this.#speech))
       }
-      agentContext.tools.register(
-        channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication),
-      )
-      agentContext.tools.register(
+      registerTool(channelCommunicationTool(input.episodeId, input.channelId, this.#assets, this.#communication))
+      registerTool(
         finishChannelTurnTool(
           (agent) => this.#channelReplyGuard.awaitingReply(agent),
           requestWait === undefined || !waitAvailable
@@ -4652,20 +4709,19 @@ export class DshHostRuntime implements AgentSessionDriver {
       )
       const scheduledTasks = this.#extensionHost?.scheduledTasks
       if (scheduledTasks !== undefined && revision.capabilities.scheduledTasks) {
-        for (const tool of scheduledTaskTools(revision.agentId, input.channelId, scheduledTasks))
-          agentContext.tools.register(tool)
+        for (const tool of scheduledTaskTools(revision.agentId, input.channelId, scheduledTasks)) registerTool(tool)
       }
       if (this.#communication.supportsRetraction?.(input.channelId) === true && this.#communication.retractMessage) {
-        agentContext.tools.register(retractChannelMessageTool(input.episodeId, this.#communication))
+        registerTool(retractChannelMessageTool(input.episodeId, this.#communication))
       }
       if (this.#communication.supportsNudge?.(input.channelId) === true && this.#communication.nudgeMember) {
-        agentContext.tools.register(nudgeChannelMemberTool(input.episodeId, this.#communication))
+        registerTool(nudgeChannelMemberTool(input.episodeId, this.#communication))
       }
-      for (const tool of historyTools(input.channelId, this.#history, this.#members)) agentContext.tools.register(tool)
-      agentContext.tools.register(assetInspectTool(input.channelId, this.#assets))
-      agentContext.tools.register(assetReadTextTool(input.channelId, this.#assets, this.#assetService))
+      for (const tool of historyTools(input.channelId, this.#history, this.#members)) registerTool(tool)
+      registerTool(assetInspectTool(input.channelId, this.#assets))
+      registerTool(assetReadTextTool(input.channelId, this.#assets, this.#assetService))
       if (supportsImage || auxiliary !== undefined) {
-        agentContext.tools.register(
+        registerTool(
           assetInspectImagesTool({
             channelId: input.channelId,
             assets: this.#assets,
@@ -4953,14 +5009,15 @@ export class DshHostRuntime implements AgentSessionDriver {
         mountDynamicCordisTools(dynamicContext, runner, {
           runsWithoutAsking: () => this.#authoring?.governance?.()?.runsWithoutAsking(revision.agentId) === true,
           chatChannel: channelContext.kind !== 'internal',
+          registration: packRegistration,
         })
         const governance = this.#authoring?.governance
         const requesterGuard = () => {
           const verdict = governance?.()?.requesterAllowed(revision.agentId, input.episodeId)
           if (verdict !== undefined && !verdict.allowed) throw new Error(verdict.reason)
         }
-        agentContext.tools.register(extensionReferenceTool())
-        agentContext.tools.register(
+        registerTool(extensionReferenceTool())
+        registerTool(
           nekroNxtExtensionDefineTool(
             runner,
             sessionId,
@@ -4998,7 +5055,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               reviseIntent = intent
             },
           }))
-            agentContext.tools.register(tool)
+            registerTool(tool)
         }
         dynamicContext.effect(() => {
           if (this.#sessions.get(sessionId)?.dynamic !== undefined) {
@@ -5029,14 +5086,14 @@ export class DshHostRuntime implements AgentSessionDriver {
           episodeId: input.episodeId,
           sessionId,
         }))
-          if (allowed.has(tool.name)) agentContext.tools.register(tool)
+          if (allowed.has(tool.name)) registerTool(tool)
         // Browsing the community is read-only and open at every autonomy level (#121).
-        for (const tool of communityBrowseTools(() => governancePort()?.community())) agentContext.tools.register(tool)
+        for (const tool of communityBrowseTools(() => governancePort()?.community())) registerTool(tool)
       }
       const communityDocs = this.#communityDocs
       if (communityDocs !== undefined && revision.capabilities.communityDocs) {
-        for (const tool of communityDocsTools(communityDocs)) agentContext.tools.register(tool)
-        agentContext.tools.register(
+        for (const tool of communityDocsTools(communityDocs)) registerTool(tool)
+        registerTool(
           communityDocsMediaTool(communityDocs, (bytes) =>
             createChannelAssetFromBytes({
               channelId: input.channelId,
@@ -5063,6 +5120,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         revision.capabilities.developmentShell
           ? commandHostPrompt(this.#commandHost(), revision.capabilities.unrestrictedFileAccess)
           : '',
+        packRegistration,
       )
       const accountPrompt = this.#commandAccountPromptOf(revision)
       if (accountPrompt !== undefined) {
@@ -5072,13 +5130,16 @@ export class DshHostRuntime implements AgentSessionDriver {
           text: () => this.#commandAccountPromptOf(revision) ?? '',
         })
       }
-      const programmatic =
-        revision.capabilities.codeRun && revision.capabilities.developmentShell && (await this.#ensureCodeRun())
       if (programmatic) {
-        agentContext.tools.presentAs('ptc')
-        // The tools service builds the run_code transport once, bound to the context that first lists a ptc scope.
-        // List it from the agent's own context now, before extension contexts (which hide sandboxPolicy) can.
-        agentContext.tools.schemas(scopeOf(agentContext))
+        // PTC execution is selected per agent; its run_code transport is bound to this agent's context.
+        await agentContext.plugin(PtcToolExecutor, {})
+        agentContext.effect(() => {
+          const record = this.#sessions.require(sessionId)
+          record.codeRun = true
+          return () => {
+            delete record.codeRun
+          }
+        }, 'nekro-nxt: code run executor')
         agentContext.systemPrompt.section({
           name: 'nekro-nxt:code-run',
           order: 20.6,
@@ -5088,12 +5149,10 @@ export class DshHostRuntime implements AgentSessionDriver {
               : CHILD_CODE_RUN_POLICY,
         })
       }
-      // Direct tool calls declare tools in the request; adding a loaded pack's tools there mid-conversation is only
-      // cheap on routes that accept additions, so elsewhere every tool stays resident.
-      const packsFit = programmatic || modelInfo.toolUpdate === 'addition-only' || modelInfo.toolUpdate === 'in-history'
       const capabilityPacks = mountCapabilityPacks(agentContext, {
-        packs: packsFit ? sessionCapabilityPacks(revision.capabilities) : [],
-        presentation: programmatic ? 'ptc' : 'native',
+        packs,
+        presentation: packPresentation,
+        loadState: packLoadState,
         rootSessionId: sessionId,
         onLoad: (packs) => {
           const used = this.#packsUsedByEpisode.get(input.episodeId) ?? new Set<string>()
@@ -5277,7 +5336,7 @@ export class DshHostRuntime implements AgentSessionDriver {
               : memberSummary(this.#history, event.senderMemberId, this.#members).displayName,
         }),
       })
-      agent.session.append('nekro-nxt/memory', {
+      appendNxtRecord(agent.session, 'plugin:nekro-nxt/memory', {
         kind: 'backlog-folded',
         admissionId: input.admissionId,
         foldedCount: backlog.folded.length,
@@ -5332,7 +5391,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       }
     }
     if (imageStats.imageCount > 0 || imageStats.skippedCount > 0) {
-      agent.session.append('nekro-nxt/image-admission', {
+      appendNxtRecord(agent.session, 'plugin:nekro-nxt/image-admission', {
         admissionId: input.admissionId,
         ...imageStats,
       })
@@ -5396,7 +5455,7 @@ export class DshHostRuntime implements AgentSessionDriver {
         source: { kind: 'nekro-nxt-memory-review' },
       }) satisfies UserMessage,
     )
-    agent.session.append('nekro-nxt/memory', { kind: 'idle-review', quietMinutes })
+    appendNxtRecord(agent.session, 'plugin:nekro-nxt/memory', { kind: 'idle-review', quietMinutes })
     await this.#context.sessions.flush(agent.session)
   }
 
@@ -5431,7 +5490,7 @@ export class DshHostRuntime implements AgentSessionDriver {
       }) satisfies UserMessage,
     )
     if (stats.imageCount > 0 || stats.skippedCount > 0) {
-      agent.session.append('nekro-nxt/image-admission', {
+      appendNxtRecord(agent.session, 'plugin:nekro-nxt/image-admission', {
         admissionId: `console:${input.logicalMessageId}`,
         ...stats,
       })
@@ -5653,6 +5712,12 @@ export class DshHostRuntime implements AgentSessionDriver {
    * keeps that model.
    */
   #fallbackChain(sessionId: string): readonly AgentModelSelection[] | undefined {
+    const chain = this.#modelChain(sessionId)
+    return chain === undefined || chain.length < 2 ? undefined : chain
+  }
+
+  /** The main model followed by its fallbacks, for a session that follows its agent's models; see #fallbackChain. */
+  #modelChain(sessionId: string): readonly AgentModelSelection[] | undefined {
     const owned = this.#sessions.get(sessionId)
     let revision = owned?.revision
     if (owned === undefined) {
@@ -5664,46 +5729,40 @@ export class DshHostRuntime implements AgentSessionDriver {
     }
     if (revision === undefined) return undefined
     const current = this.#compaction?.currentRevision(revision.agentId) ?? revision
-    return current.fallbackModels.length === 0 ? undefined : [current.model, ...current.fallbackModels]
+    return [current.model, ...current.fallbackModels]
   }
 
   /**
-   * Fallback models: a request that failed with a used-up quota, or stayed unavailable after the usual retries, is
-   * retried on the next model of the agent's chain. DSH settles a failed attempt where the model cannot see it and runs
-   * tools only after a complete reply, so retrying the step repeats no side effect.
+   * Fallback models: a request that failed with a used-up quota, or stayed unavailable after the usual retries, moves
+   * the conversation to the next model of the agent's chain. DSH fixes a step's model before the step is prepared and
+   * keeps it for the step's retries, so the move applies from the next step: the failed reply ends, and the next one
+   * runs on the fallback. Routes are chosen with `agent.model.select()` whenever an agent starts working.
    */
   #mountModelFallback(context: Context): void {
-    context.on('agent/request', async (payload, next) => {
-      const config = await next()
-      const sessionId = String(payload.agent.id)
+    const selectRoute = (agent: Agent): void => {
+      const sessionId = String(agent.id)
       const chain = this.#fallbackChain(sessionId)
+      let route: AgentModelSelection | undefined
       if (chain === undefined) {
-        // The fallback models were removed while the session ran on one: back to the main model.
+        // No fallback chain: follow the agent's main model. A session's model choice outlives the step that made it,
+        // so a session that once ran on a fallback (since removed) must not keep that model after the main model
+        // changes. A session already on the main model is left alone, so DSH keeps settling its thinking level.
         this.#fallbackRoutes.delete(sessionId)
-        return config
+        const main = this.#modelChain(sessionId)?.[0]
+        const selected = agent.model.current()
+        if (main === undefined || (selected !== undefined && sameRoute(selected, main))) return
+        route = main
+      } else {
+        const main = chain[0]!
+        const current = this.#fallbackRoutes.get(sessionId)?.route ?? main
+        route = routeForRequest({ chain, current, startsTurn: true, health: this.#routeHealth, now: Date.now() })
+        if (!sameRoute(route, current)) this.#useRoute(sessionId, route, chain, undefined)
       }
-      const main = chain[0]!
-      const current = this.#fallbackRoutes.get(sessionId)?.route ?? main
-      const route = routeForRequest({
-        chain,
-        current,
-        startsTurn: payload.step === 1,
-        health: this.#routeHealth,
-        now: Date.now(),
-      })
-      if (!sameRoute(route, current)) this.#useRoute(sessionId, route, chain, undefined)
-      if (sameRoute(route, config)) return config
-      // The thinking level belongs to the model it was chosen for.
-      const rest: Omit<typeof config, 'reasoningEffort'> & { reasoningEffort?: typeof config.reasoningEffort } = {
-        ...config,
-      }
-      delete rest.reasoningEffort
-      return {
-        ...rest,
-        provider: route.provider,
-        model: route.model,
-        ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: ReasoningEffortId(route.reasoningEffort) }),
-      }
+      if (route !== undefined) selectModelRoute(agent, route)
+    }
+    // A waking delivery enters `running` before the loop reads the model for its first step.
+    context.on('agent/status', ({ agent, status }) => {
+      if (status === 'running') selectRoute(agent)
     })
     // Retries of a 400 count per route, so a fallback model gets its own after a switch. Whichever side of the
     // fallback listener this runs on, the retries come first and the switch after them.
@@ -5758,7 +5817,9 @@ export class DshHostRuntime implements AgentSessionDriver {
       const target = firstHealthyRoute(chain, this.#routeHealth, now, current)
       if (target === undefined) return reason === 'quota' ? next() : undefined
       this.#useRoute(sessionId, target, chain, { reason, code: payload.failure.code, from: current })
-      return { kind: 'retry' as const }
+      // A retry would repeat this step on the model it was prepared with; the next step runs on the fallback.
+      selectModelRoute(payload.agent, target)
+      return reason === 'quota' ? next() : undefined
     })
   }
 
@@ -5954,8 +6015,18 @@ export class DshHostRuntime implements AgentSessionDriver {
   #sessionSpillDirectories(sessionId: SessionId): string[] {
     const agents = this.#context.agents
     const owner = agents.get(sessionId)
-    const children = owner === undefined ? [] : agents.list().filter((agent) => agents.isOwnedBy(agent.id, owner))
+    const children =
+      owner === undefined ? [] : agents.list().filter((agent) => agent !== owner && this.#treeRootOf(agent) === owner)
     return [sessionId, ...children.map((agent) => agent.id)].map((id) => sessionSpillDirectory(this.#spillRoot, id))
+  }
+
+  /** The live root of an agent's subagent tree; undefined while its tree owner is unavailable. */
+  #treeRootOf(agent: Agent): Agent | undefined {
+    try {
+      return this.#context.subagents.rootOf(agent)
+    } catch {
+      return undefined
+    }
   }
 
   /** Commands of agents with unrestricted file access keep the program's own reach, network included. */
@@ -6243,12 +6314,13 @@ export class DshHostRuntime implements AgentSessionDriver {
     return (await this.#context.compaction.compactNow(agent, signal ?? new AbortController().signal)) !== null
   }
 
-  /** Read DSH's durable direct-child projection without resuming cold children. */
-  listSubagents(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentCatalogEntry[]> {
+  /** Read DSH's durable catalog of direct children without resuming cold children; unreadable ones are left out. */
+  async listSubagents(dshSessionId: string, signal?: AbortSignal): Promise<readonly SubagentChildEntry[]> {
     this.#assertActive()
     const agent = this.#context.agents.get(SessionId(dshSessionId))
     if (!agent) throw new Error(`DSH Agent Session is not live: ${dshSessionId}`)
-    return this.#context.subagents.listChildren(agent.id, signal)
+    const descendants = await this.#context.subagents.listDescendants(agent.id, signal)
+    return descendants.filter((entry): entry is SubagentChildEntry => entry.kind === 'child' && entry.depth === 1)
   }
   defineDynamicPackage(dshSessionId: string, input: DynamicPackageDefinitionInput): DynamicCordisDefineReceipt {
     return this.#dynamic.defineDynamicPackage(dshSessionId, input)

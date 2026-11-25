@@ -51,7 +51,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.check.outputs.release == 'true'
         with:
-          node-version: 22.23.2
+          node-version: 24.22.3
       - uses: actions/setup-java@v4
         if: steps.check.outputs.release == 'true'
         with:

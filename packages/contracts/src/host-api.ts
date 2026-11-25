@@ -2074,7 +2074,7 @@ export const HostSnapshotSchema = z
         webSearch: z
           .object({
             unavailableReason: z.string().optional(),
-            provider: z.literal('deepseek-official'),
+            provider: z.literal('deepseek-search-api'),
             available: z.boolean(),
             credentialConfigured: z.boolean(),
             credentialReference: NonEmptyStringSchema,

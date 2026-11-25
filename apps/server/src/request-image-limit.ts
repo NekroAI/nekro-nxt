@@ -1,6 +1,8 @@
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent, SessionSeq } from '@deepseek-ai/dsh-session'
 import type { ImageOffloadTarget, OffloadableSession } from './compaction-pressure.js'
+import { nxtRecordOf } from './nxt-session-records.js'
+import type {} from './request-timing.js'
 
 /**
  * Images a request carries, trimmed in steps. Every omission rewrites the conversation from the oldest image it
@@ -140,10 +142,9 @@ export const observedRequestImages = (
   events: readonly SessionEvent[],
 ): Exclude<RequestImageTransport, 'unknown'> | undefined => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]!
-    if (event.type !== 'nekro-nxt/request-sent') continue
     // Recorded by `request-timing.ts` for official DeepSeek requests.
-    const data = event.data
+    const data = nxtRecordOf(events[index]!, 'plugin:nekro-nxt/request-sent')?.data
+    if (data === undefined) continue
     if (data.images === 0) continue
     return data.fileImages === 0 ? 'resent' : 'uploaded'
   }

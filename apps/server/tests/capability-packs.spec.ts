@@ -2,7 +2,9 @@
 import { Context } from '@deepseek-ai/cordis'
 import { SessionSeq } from '@deepseek-ai/dsh-session'
 import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt'
-import ToolRuntime, { defineTool, renderToolsSdk } from '@deepseek-ai/dsh-tools'
+import * as PtcToolExecutor from '@deepseek-ai/dsh-tool-executor-ptc'
+import { renderToolsSdk } from '@deepseek-ai/dsh-tool-executor-ptc'
+import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   capabilityCatalogText,
@@ -43,7 +45,8 @@ const programmaticContext = async () => {
   contexts.push(context)
   await context.plugin(SystemPrompt, { personaPrefix: '', includeHarnessIdentity: false })
   context.provide('ptcRuntime', { language: 'typescript' } as never)
-  await context.plugin(ToolRuntime, { mode: 'ptc' })
+  await context.plugin(ToolRuntime)
+  await context.plugin(PtcToolExecutor, {})
   context.tools.register(fixtureTool('fixture_chat', '在频道里说话。'))
   context.tools.register(fixtureTool('fixture_list', '列出虚构的扩展。'))
   context.tools.register(fixtureTool('fixture_define', '定义虚构的候选。'))

@@ -3,6 +3,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import { freezeMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { PostToolDecision, ToolExecution, ToolExecutionResult } from '@deepseek-ai/dsh-tools'
+// `tools/ptc-dispatch-log` is declared by the PTC executor; the policy listens without mounting it.
+import type {} from '@deepseek-ai/dsh-tool-executor-ptc'
 import type { AdapterChannelInboundEvent } from '@nekro-nxt/adapter-sdk'
 import type { MessagePart } from '@nekro-nxt/contracts'
 import type { SecretRegistry } from './secret-registry.js'
