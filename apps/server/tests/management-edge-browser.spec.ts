@@ -3,9 +3,12 @@ import { openMigratedCoreDatabase, SqliteHostSecurityRepository } from '@nekro-n
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import { request as httpsRequest } from 'node:https'
+import { once } from 'node:events'
+import { createConnection } from 'node:net'
+import { connect as connectTls } from 'node:tls'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { browserDeviceLabel, startManagementEdge, type ManagementEdgeHandle } from '../src/management-edge.ts'
 
@@ -84,16 +87,20 @@ describe('browser sign-in through the management edge', () => {
   const roots: string[] = []
   const internals: Server[] = []
   const edges: ManagementEdgeHandle[] = []
+  const databases: Awaited<ReturnType<typeof openMigratedCoreDatabase>>[] = []
   afterEach(async () => {
     await Promise.all(edges.splice(0).map((edge) => edge.stop()))
     await Promise.all(internals.splice(0).map((server) => new Promise((resolve) => server.close(resolve))))
+    for (const database of databases.splice(0)) database.close()
     await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
   })
 
   const start = async (options: { readonly trustProxy?: boolean } = {}) => {
     const root = await mkdtemp(path.join(os.tmpdir(), 'nxt-edge-browser-'))
     roots.push(root)
-    const repository = new SqliteHostSecurityRepository(await openMigratedCoreDatabase(path.join(root, 'core.sqlite')))
+    const database = await openMigratedCoreDatabase(path.join(root, 'core.sqlite'))
+    databases.push(database)
+    const repository = new SqliteHostSecurityRepository(database)
     const internal = createServer((req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
@@ -128,6 +135,98 @@ describe('browser sign-in through the management edge', () => {
       method: 'POST',
       body: { managementKey: MANAGEMENT_KEY, acknowledgeInsecure },
     })
+
+  it('closes idle connections before they select HTTP or TLS', async () => {
+    const { edge } = await start()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const socket = createConnection({ host: '127.0.0.1', port: edge.port })
+    const closed = once(socket, 'close')
+    let deadline: ReturnType<typeof setTimeout> | undefined
+    try {
+      await once(socket, 'connect')
+      // The client can connect before the server accepts the socket on Windows.
+      await vi.waitFor(() => expect(vi.getTimerCount()).toBeGreaterThan(0))
+      await vi.advanceTimersByTimeAsync(10_000)
+      vi.useRealTimers()
+      const timedOut = new Promise<boolean>((resolve) => {
+        deadline = setTimeout(() => resolve(false), 1000)
+      })
+      expect(await Promise.race([closed.then(() => true), timedOut])).toBe(true)
+    } finally {
+      vi.useRealTimers()
+      if (deadline !== undefined) clearTimeout(deadline)
+      socket.destroy()
+      await closed
+    }
+  })
+
+  it.each(['http', 'https'] as const)(
+    'expires incomplete headers after the connection selects %s',
+    async (protocol) => {
+      const { edge } = await start()
+      const socket =
+        protocol === 'http'
+          ? createConnection({ host: '127.0.0.1', port: edge.port })
+          : connectTls({ host: '127.0.0.1', port: edge.port, rejectUnauthorized: false })
+      const closed = once(socket, 'close')
+      let response = ''
+      socket.on('data', (chunk: Buffer) => {
+        response += chunk.toString('utf8')
+      })
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      try {
+        await once(socket, protocol === 'http' ? 'connect' : 'secureConnect')
+        socket.write('GET /login HTTP/1.1\r\nHost: fixture.test\r\nX-Pending: ')
+        const timedOut = new Promise<boolean>((resolve) => {
+          deadline = setTimeout(() => resolve(false), 12_500)
+        })
+        expect(await Promise.race([closed.then(() => true), timedOut])).toBe(true)
+        expect(response).toContain('408 Request Timeout')
+      } finally {
+        if (deadline !== undefined) clearTimeout(deadline)
+        socket.destroy()
+        await closed
+      }
+    },
+    20_000,
+  )
+
+  it.each(['http', 'https'] as const)(
+    'accepts a slowly received login body after complete %s headers',
+    async (protocol) => {
+      const { edge } = await start()
+      const socket =
+        protocol === 'http'
+          ? createConnection({ host: '127.0.0.1', port: edge.port })
+          : connectTls({ host: '127.0.0.1', port: edge.port, rejectUnauthorized: false })
+      const closed = once(socket, 'close')
+      let response = ''
+      socket.on('data', (chunk: Buffer) => {
+        response += chunk.toString('utf8')
+      })
+      let deadline: ReturnType<typeof setTimeout> | undefined
+      try {
+        await once(socket, protocol === 'http' ? 'connect' : 'secureConnect')
+        const body = JSON.stringify({ managementKey: MANAGEMENT_KEY, acknowledgeInsecure: true })
+        socket.write(
+          `POST /api/management/login HTTP/1.1\r\nHost: fixture.test\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body.slice(0, 1)}`,
+        )
+        // A complete header ends its deadline; receiving the body may take longer than ten seconds.
+        await new Promise<void>((resolve) => setTimeout(resolve, 10_500))
+        socket.write(body.slice(1))
+        const timedOut = new Promise<boolean>((resolve) => {
+          deadline = setTimeout(() => resolve(false), 1500)
+        })
+        expect(await Promise.race([closed.then(() => true), timedOut])).toBe(true)
+        expect(response).toContain('200 OK')
+      } finally {
+        if (deadline !== undefined) clearTimeout(deadline)
+        socket.destroy()
+        await closed
+      }
+    },
+    20_000,
+  )
 
   it('serves plain HTTP on the same port, asks to accept the risk and keeps the browser signed in', async () => {
     const { edge, repository } = await start()
