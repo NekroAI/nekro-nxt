@@ -7,6 +7,11 @@ packages:
 verifyDepsBeforeRun: false
 
 overrides:
+  '@modelcontextprotocol/client@>=2.0.0 <2.3.0': 2.3.0
+  'fast-uri@>=3.0.0 <3.1.9': 3.1.9
+  'source-map-js@>=1.0.0 <1.2.2': 1.2.2
+  'undici@>=8.0.0 <8.12.2': 8.12.2
+  'zod@>=4.0.0 <4.6.6': 4.6.6
   '@deepseek-ai/cordis-plugin-include': 1.0.10-alpha.1
   '@deepseek-ai/cordis-plugin-group': 1.0.5-alpha.1
   '@aws-sdk/credential-provider-ini': 3.973.13

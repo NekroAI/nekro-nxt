@@ -32,7 +32,7 @@
     "@noble/hashes": "2.3.0",
     "fflate": "0.8.3",
     "postcss": "8.5.26",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "author": "NekroAI contributors",
   "homepage": "https://github.com/NekroAI/nekro-nxt/tree/main/packages/extension-format#readme",

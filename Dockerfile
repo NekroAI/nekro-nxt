@@ -8,7 +8,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /workspace
-RUN corepack enable && corepack prepare pnpm@11.7.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.28.9 --activate
 COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @nekro-nxt/server... --filter @nekro-nxt/web... run build

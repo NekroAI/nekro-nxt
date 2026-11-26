@@ -3,7 +3,7 @@
 ## 环境
 
 - Node.js `^22.19.0 || >=24.0.0`；
-- pnpm `11.7.0`；
+- pnpm `11.28.9`；
 - Git；
 - 产品旅程需要 Playwright Chromium。
 

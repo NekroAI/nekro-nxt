@@ -5,7 +5,7 @@
   "license": "AGPL-3.0-only",
   "description": "NekroNXT：基于 DeepSeek Harness（DSH）的多平台群聊智能体系统｜A DSH-powered multi-platform group-chat agent system",
   "type": "module",
-  "packageManager": "pnpm@11.7.0",
+  "packageManager": "pnpm@11.28.9",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
@@ -69,7 +69,7 @@
     "postcss-selector-parser": "7.1.0",
     "preact": "10.27.2",
     "prettier": "3.9.6",
-    "sharp": "0.35.3",
+    "sharp": "0.35.5",
     "tar": "7.5.22",
     "tsdown": "0.22.2",
     "tsx": "4.22.4",
