@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import path from 'node:path'
 
 interface MenuItem {
   readonly label: string
@@ -48,7 +49,7 @@ describe('Windows tray', () => {
     const tray = created[0]
     if (!tray) throw new Error('Tray was not created')
 
-    expect(tray.icon).toContain('/tray/preview.ico')
+    expect(tray.icon).toBe(path.resolve(import.meta.dirname, '../src/tray/preview.ico'))
     expect(tray.tooltip).toBe('NekroNXT Preview')
     expect(tray.menu.map((item) => item.label)).toEqual(['显示窗口', '退出'])
     tray.menu[0]?.click()
