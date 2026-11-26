@@ -8,8 +8,10 @@ import { localExtensions, openMigratedCoreDatabase, SqliteCoreRepository } from 
 import { agentDefinitions } from '../src/schema.ts'
 
 const directories: string[] = []
+const databases: Array<Awaited<ReturnType<typeof openMigratedCoreDatabase>>> = []
 
 afterEach(async () => {
+  for (const database of databases.splice(0)) database.close()
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })))
 })
 
@@ -21,6 +23,7 @@ const open = async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'nekro-nxt-config-history-'))
   directories.push(directory)
   const database = await openMigratedCoreDatabase(path.join(directory, 'core.sqlite'))
+  databases.push(database)
   database.db
     .insert(localExtensions)
     .values({
